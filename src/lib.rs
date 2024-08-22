@@ -1,4 +1,6 @@
 pub mod runtime;
+pub mod http_client;
+// pub mod reqwest_proxy;
 // pub mod calloop;
 
 use log::info;

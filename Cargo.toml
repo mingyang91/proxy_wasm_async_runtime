@@ -1,0 +1,26 @@
+[package]
+name = "pow-waf"
+version = "0.1.0"
+edition = "2021"
+
+[build]
+target = "wasm32-wasi"
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"
+
+[dependencies]
+log = "0.4"
+proxy-wasm = "0.2.2"
+pin-project-lite = "0.2"
+# calloop = { version = "0.14", features = ["executor"] }
+# winit = { version = "0.30" }
+

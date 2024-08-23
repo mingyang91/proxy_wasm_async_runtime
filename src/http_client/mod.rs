@@ -1,11 +1,12 @@
+use bytes::Bytes;
 use http::{Request, Uri};
 use http_body::Body;
 use hyper::{
-    client::conn::http1::{handshake, Connection},
-    rt::ReadBufCursor,
+    body::Incoming, client::conn::http1::{handshake, Connection}, rt::ReadBufCursor
 };
+use pin_project_lite::pin_project;
 use std::{
-    collections::VecDeque, error::Error as StdError, future::Future, pin::Pin, task::{Context, Poll}
+    collections::VecDeque, error::Error as StdError, future::Future, pin::{pin, Pin}, task::{Context, Poll}
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower_service::Service;
@@ -62,11 +63,22 @@ impl http_body::Body for Entity {
     }
 }
 
-struct Pending;
+pin_project! {
+    struct Pending {
+        #[pin]
+        incoming: Incoming,
+    }
+}
+
 impl Future for Pending {
-    type Output = Result<HostCall, Error>;
+    type Output = Result<Bytes, Error>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        unimplemented!()
+        match self.project().incoming.poll_frame(cx) {
+            Poll::Ready(Some(Ok(chunk))) => Poll::Ready(Ok(chunk.into_data().expect("msg"))),
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(Error)),
+            Poll::Ready(None) => Poll::Ready(Err(Error)),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -81,7 +93,8 @@ async fn test() {
         )
         .await
         .expect("msg");
-    let body = res.body();
+    let (header, body) = res.into_parts();
     // let builder = hyper::Client::builder();
     // builder.build();
 }
+

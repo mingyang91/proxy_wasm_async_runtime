@@ -1,0 +1,45 @@
+controller:
+  proxy:
+    nameOverride: "{{ .Release.Name }}-gateway-proxy"
+
+  enabled: true
+
+  deployment:
+    kong:
+      enabled: false
+
+  ingressController:
+    enabled: true
+    installCRDS: false
+    gatewayDiscovery:
+      enabled: true
+      generateAdminApiService: true
+
+  podAnnotations:
+    kuma.io/gateway: enabled
+    # This port must match your Kong admin API port. 8444 is the default.
+    # If you set gateway.admin.tls.containerPort, change these annotations
+    # to use that value.
+    traffic.kuma.io/exclude-outbound-ports: "8444"
+    traffic.sidecar.istio.io/excludeOutboundPorts: "8444"
+
+gateway:
+  enabled: true
+  deployment:
+    kong:
+      enabled: true
+
+  admin:
+    enabled: true
+    type: ClusterIP
+    clusterIP: None
+    http:
+      enabled: true
+
+  ingressController:
+    enabled: true
+    installCRDS: false
+
+  env:
+    role: traditional
+    database: "off"

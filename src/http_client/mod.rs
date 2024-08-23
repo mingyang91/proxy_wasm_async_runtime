@@ -1,7 +1,7 @@
 use std::{error::Error as StdError, future::Future, pin::Pin, task::{Context, Poll}};
 use tokio::io::{AsyncRead, AsyncWrite};
 use http::{Request, Uri};
-use hyper::{body::HttpBody, client::connect::Connection, Client};
+use hyper::client::conn::http1::handshake;
 use tower_service::Service;
 
 struct Error;
@@ -42,7 +42,6 @@ impl AsyncWrite for HostCall {
 		}
 }
 
-
 struct Pending;
 impl Future for Pending {
 		type Output = Result<HostCall, Error>;
@@ -67,6 +66,7 @@ impl Service<Uri> for PWC {
 }
 
 async fn test() {
+	let conn = handshake().await;
 	let client: Client<PWC, String> = hyper::Client::builder().build(PWC);
 	let mut res = client.request(
 		Request::builder()

@@ -22,7 +22,8 @@ log = "0.4"
 proxy-wasm = "0.2.2"
 pin-project-lite = "0.2"
 bytes = { version = "1.7"}
-http = { version = "0.2" }
+http = { version = "1.1" }
+http-body = { version = "1.0" }
 mime_guess = { version = "2.0" }
 # reqwest = { version = "*" }
 hyper = { version = "1.4", features = ["client", "http1"] }

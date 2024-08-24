@@ -1,25 +1,27 @@
 pub mod runtime;
-pub mod http_client;
+// pub mod http_client;
+pub mod chain;
 // pub mod reqwest_proxy;
 // pub mod calloop;
 
 use log::info;
-use runtime::timeout::sleep;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
+use runtime::DefaultRuntime;
 use std::time::Duration;
 
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
-    proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(HttpAuthRandom) });
-    proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> { Box::new(HttpAuthRandom) });
+    proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(HttpAuthRandom::default()) });
+    proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> { Box::new(DefaultRuntime::default()) });
 }}
 
-struct HttpAuthRandom;
+#[derive(Default)]
+struct HttpAuthRandom { token: Option<u32> }
 
 impl HttpContext for HttpAuthRandom {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
-        self.dispatch_http_call(
+        let token = self.dispatch_http_call(
             "httpbin",
             vec![
                 (":method", "GET"),
@@ -31,6 +33,7 @@ impl HttpContext for HttpAuthRandom {
             Duration::from_secs(1),
         )
         .unwrap();
+        self.token.replace(token);
         Action::Pause
     }
 
@@ -41,7 +44,10 @@ impl HttpContext for HttpAuthRandom {
 }
 
 impl Context for HttpAuthRandom {
-    fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
+    fn on_http_call_response(&mut self, token: u32, _: usize, body_size: usize, _: usize) {
+        if Some(token) != self.token {
+            return;
+        }
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
             if !body.is_empty() && body[0] % 2 == 0 {
                 info!("Access granted.");
@@ -55,25 +61,5 @@ impl Context for HttpAuthRandom {
             vec![("Powered-By", "proxy-wasm")],
             Some(b"Access forbidden.\n"),
         );
-    }
-}
-
-impl RootContext for HttpAuthRandom {
-    fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        info!("Hello from WASM");
-        self.set_tick_period(Duration::from_millis(1));
-        runtime::spawn_local(async {
-            loop {
-                sleep(Duration::from_secs(1)).await;
-                info!("beats");
-            }
-        });
-        true
-    }
-
-    fn on_tick(&mut self) {
-        runtime::queue::QUEUE.with(|queue| {
-            queue.on_tick();
-        });
     }
 }

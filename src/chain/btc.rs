@@ -68,13 +68,11 @@ impl BTC {
             return Err(Status::InternalFailure);
         };
 
-        let body_str = match String::from_utf8(body) {
-            Ok(body_str) => body_str,
-            Err(e) => {
+        let body_str = String::from_utf8(body)
+            .map_err(|e| {
                 warn!("invalid response body: {}", e);
-                return Err(Status::InternalFailure);
-            }
-        };
+                Status::InternalFailure
+            })?;
 
         debug!("response body: {}", body_str);
         if self.recent_hash_list.contains(&body_str) {

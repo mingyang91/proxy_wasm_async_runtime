@@ -1,10 +1,9 @@
 use std::{collections::VecDeque, time::Duration};
 
-use hyper::body;
 use log::{debug, info, warn};
-use proxy_wasm::{traits::Context, types::Status};
+use proxy_wasm::types::Status;
 
-use crate::runtime::{timeout::sleep, Response, Runtime};
+use crate::runtime::{timeout::sleep, Runtime};
 
 pub struct BTC {
     pub recent_hash_list: VecDeque<String>,

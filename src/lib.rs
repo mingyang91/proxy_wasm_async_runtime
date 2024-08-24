@@ -1,8 +1,5 @@
 pub mod runtime;
-// pub mod http_client;
 pub mod chain;
-// pub mod reqwest_proxy;
-// pub mod calloop;
 
 use log::info;
 use proxy_wasm::traits::*;

@@ -1,13 +1,20 @@
 use std::{collections::VecDeque, time::Duration};
+use std::sync::RwLock;
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 use proxy_wasm::types::Status;
 
 use crate::runtime::{timeout::sleep, Runtime};
 
 pub struct BTC {
-    pub recent_hash_list: VecDeque<String>,
-    state: State,
+    recent_hash_list: RwLock<VecDeque<String>>,
+    state: RwLock<State>,
+}
+
+impl Default for BTC {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 enum State {
@@ -19,18 +26,25 @@ enum State {
 impl BTC {
     pub fn new() -> Self {
         Self {
-            recent_hash_list: VecDeque::new(),
-            state: State::Initial,
+            recent_hash_list: RwLock::new(VecDeque::new()),
+            state: RwLock::new(State::Initial),
         }
+    }
+
+    pub fn get_latest_hash(&self) -> Option<String> {
+        self.recent_hash_list.read()
+            .expect("failed to read recent hash list")
+            .front()
+            .map(|s| s.clone())
     }
 
     // curl -sSL "https://mempool.space/api/blocks/tip/hash"
     // 0000000000000000000624d76f52661d0f35a0da8b93a87cb93cf08fd9140209
-    pub async fn start<'a, R>(&mut self, runtime: &'a R) 
+    pub async fn start<'a, R>(&self, runtime: &'a R) 
     where R: Runtime {
         self.turn(State::Running);
-        while let State::Running = self.state {
-            info!("poll for new block hash");
+        while let State::Running = *self.state.read().expect("failed to read state") {
+            debug!("poll for new block hash");
             if let Err(e) = self.update_latest_hash(runtime).await {
                 warn!("failed to update latest hash: {:?}", e);
             }
@@ -38,11 +52,11 @@ impl BTC {
         }
     }
 
-    fn turn(&mut self, state: State) {
-        self.state = state;
+    fn turn(&self, state: State) {
+        *self.state.write().expect("failed to write state") = state;
     }
 
-    async fn update_latest_hash<'a, R>(&mut self, runtime: &'a R) -> Result<(), Status>
+    async fn update_latest_hash<'a, R>(&self, runtime: &'a R) -> Result<(), Status>
     where R: Runtime {
         debug!("fetching latest block hash from mempool.space");
         let response = runtime.http_call(
@@ -74,17 +88,18 @@ impl BTC {
                 Status::InternalFailure
             })?;
 
+        let mut recent_hash_list = self.recent_hash_list.write().expect("failed to write recent hash list");
         debug!("response body: {}", body_str);
-        if self.recent_hash_list.contains(&body_str) {
+        if recent_hash_list.contains(&body_str) {
             return Ok(());
         }
 
-        info!("New block hash: {}", body_str);
+        debug!("New block hash: {}", body_str);
 
-        self.recent_hash_list.push_front(body_str);
+        recent_hash_list.push_front(body_str);
 
-        if self.recent_hash_list.len() > 2 {
-            let _: Vec<_> = self.recent_hash_list.drain(2..).collect();
+        if recent_hash_list.len() > 2 {
+            let _: Vec<_> = recent_hash_list.drain(2..).collect();
         }
 
         Ok(())

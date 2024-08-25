@@ -1,15 +1,14 @@
+use core::panic;
 use std::{
-    cell::RefCell, collections::HashMap, future::Future, ops::DerefMut, pin::Pin, rc::Rc, task::{Poll, Waker}, time::Duration
+    cell::RefCell, collections::HashMap, future::Future, pin::Pin, rc::Rc, task::{Poll, Waker}, time::Duration
 };
 
-use log::info;
+use log::{info, warn};
 use proxy_wasm::{
-    traits::{Context, RootContext},
-    types::Status,
+    hostcalls, traits::{Context, HttpContext, RootContext}, types::{Action, Status}
 };
-use timeout::sleep;
 
-use crate::{chain, runtime};
+use crate::runtime;
 
 mod task {
     mod singlethread;
@@ -98,8 +97,6 @@ impl Future for Promise {
 }
 
 pub trait Runtime: Context {
-    fn pendings(&self) -> &RefCell<HashMap<u32, Promise>>;
-
     fn http_call(
         &self,
         upstream: &str,
@@ -110,22 +107,28 @@ pub trait Runtime: Context {
     ) -> Result<Promise, Status> {
         let token = Context::dispatch_http_call(self, upstream, headers, body, trailers, timeout)?;
         let promise = Promise::pending();
-        self.pendings().borrow_mut().insert(token, promise.clone());
+        PENDINGS.with(|pendings| pendings.insert(token, promise.clone()));
         Ok(promise)
+    }
+
+    fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
+        true
     }
 }
 
-#[derive(Default)]
-pub struct DefaultRuntimeInner {
-    pendings: RefCell<HashMap<u32, Promise>>,
+pub struct RuntimeBox<R: Runtime> {
+    inner: R
 }
 
-#[derive(Default, Clone)]
-pub struct DefaultRuntime {
-    inner: Rc<DefaultRuntimeInner>,
+impl <R: Runtime> RuntimeBox<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner
+        }
+    }
 }
 
-impl Context for DefaultRuntime {
+impl <R: Runtime> Context for RuntimeBox<R> {
     fn on_http_call_response(
         &mut self,
         token_id: u32,
@@ -133,7 +136,7 @@ impl Context for DefaultRuntime {
         body_size: usize,
         _num_trailers: usize,
     ) {
-        if let Some(promise) = self.inner.pendings.borrow_mut().remove(&token_id) {
+        if let Some(promise) = PENDINGS.with(|pendings| pendings.remove(&token_id)) {
             if num_headers == 0 {
                 promise.reject();
                 return;
@@ -151,22 +154,36 @@ impl Context for DefaultRuntime {
     }
 }
 
-impl RootContext for DefaultRuntime {
+struct Pendings {
+    inner: RefCell<HashMap<u32, Promise>>,
+}
+
+impl Pendings {
+    fn new() -> Self {
+        Self {
+            inner: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn insert(&self, token: u32, promise: Promise) {
+        if let Some(_) = self.inner.borrow_mut().insert(token, promise) {
+            panic!("overwriting pending promise for token: {}", token);
+        }
+    }
+
+    fn remove(&self, token: &u32) -> Option<Promise> {
+        self.inner.borrow_mut().remove(token)
+    }
+}
+
+thread_local! {
+    pub(crate) static PENDINGS: Pendings = Pendings::new();
+}
+
+impl <R: Runtime> RootContext for RuntimeBox<R> {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        let mut btc = chain::btc::BTC::new();
-        info!("Hello from WASM");
         self.set_tick_period(Duration::from_millis(1));
-        runtime::spawn_local(async move {
-            loop {
-                sleep(Duration::from_secs(10)).await;
-                info!("beats");
-            }
-        });
-        let runtime = self.clone();
-        runtime::spawn_local(async move {
-            btc.start(&runtime).await;
-        });
-        true
+        self.inner.on_vm_start(_vm_configuration_size)
     }
 
     fn on_tick(&mut self) {
@@ -174,6 +191,73 @@ impl RootContext for DefaultRuntime {
     }
 }
 
-impl Runtime for DefaultRuntime {
-    fn pendings(&self) -> &RefCell<HashMap<u32, Promise>> { &self.inner.pendings }
+pub struct Ctx { id: u32 }
+
+impl Context for Ctx {}
+
+impl HttpContext for Ctx {}
+
+impl Ctx {
+    pub fn new(id: u32) -> Self {
+        Self { id }
+    }
+    pub fn get_http_request_headers(&self) -> Vec<(String, String)> {
+        hostcalls::set_effective_context(self.id).expect("failed to set effective context");
+        HttpContext::get_http_request_headers(self)
+    }
+}
+
+pub trait HttpHook {
+    fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> impl Future<Output = Result<(), Response>> + Send;
+}
+
+pub struct HookHolder<H: HttpHook + 'static> {
+    context_id: u32,
+    inner: Rc<RefCell<H>>,
+}
+
+impl <H: HttpHook + From<u32> + 'static> HookHolder<H> {
+    pub fn new(context_id: u32) -> Self {
+        info!("new http context: {}", context_id);
+        Self {
+            context_id,
+            inner: Rc::new(RefCell::new(context_id.into())),
+        }
+    }
+}
+
+impl <H: HttpHook> Context for HookHolder<H> {}
+
+impl <H: HttpHook> HttpContext for HookHolder<H> {
+    fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+        info!("on_http_request_headers");
+        let hook = self.inner.clone();
+        let context_id = self.context_id;
+        spawn_local(async move {
+            hostcalls::set_effective_context(context_id).expect("failed to set effective context");
+            let res = hook.borrow_mut().on_request_headers(_num_headers, _end_of_stream).await;
+            hostcalls::set_effective_context(context_id).expect("failed to set effective context");
+            let ret = match res {
+                Ok(()) => { 
+                    info!("resume http request: {}", context_id);
+                    hostcalls::resume_http_request() 
+                },
+                Err(resp) => {
+                    let headers: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                    info!("reject http request");
+                    hostcalls::send_http_response(400, headers, resp.body.as_deref())
+                },
+            };
+            if let Err(e) = ret {
+                warn!("failed to resume http request: {:?}", e);
+            }
+        });
+        Action::Pause
+    }
+
+    fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
+        info!("on_http_response_headers");
+        self.set_http_response_header("X-Filter-Name", Some("PoW"));
+        Action::Continue
+    }
 }

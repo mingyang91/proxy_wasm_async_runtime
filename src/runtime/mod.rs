@@ -36,7 +36,9 @@ where
     task::Task::spawn(Box::pin(future));
 }
 
+#[derive(Debug)]
 pub struct Response {
+    pub code: u32,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
     pub trailers: Vec<(String, String)>,
@@ -144,7 +146,9 @@ impl <R: Runtime> Context for RuntimeBox<R> {
             let headers = self.get_http_call_response_headers();
             let body = self.get_http_call_response_body(0, body_size);
             let trailers = self.get_http_call_response_trailers();
+            let (code, _msg) = self.get_grpc_status();
             let response = Response {
+                code,
                 headers,
                 body,
                 trailers,

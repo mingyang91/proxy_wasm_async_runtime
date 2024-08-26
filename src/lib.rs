@@ -138,6 +138,62 @@ struct DifficultyResponse {
     difficulty: ByteArray32,
 }
 
+#[derive(Debug)]
+enum Error {
+    Status { reason: String, status: proxy_wasm::types::Status },
+    Response(Response),
+    Other { reason: String, error: Box<dyn std::error::Error> },
+}
+
+impl Error {
+    fn status(reason: impl Into<String>, status: proxy_wasm::types::Status) -> Self {
+        Error::Status { reason: reason.into(), status }
+    }
+
+    fn response(response: Response) -> Self {
+        Error::Response(response)
+    }
+
+    fn other(reason: impl Into<String>, error: impl Into<Box<dyn std::error::Error>>) -> Self {
+        Error::Other { reason: reason.into(), error: error.into() }
+    }
+}
+
+impl Into<Response> for Error {
+    fn into(self) -> Response {
+        match self {
+            Error::Response(response) => response,
+            Error::Status { reason, status } => {
+                let msg = format!("{}: {:?}", reason, status);
+                Response {
+                    code: 500,
+                    headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                    body: Some(msg.into_bytes()),
+                    trailers: vec![],
+                }
+            },
+            Error::Other { reason, error } => {
+                let msg = format!("{}: {}", reason, error);
+                Response {
+                    code: 500,
+                    headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                    body: Some(msg.into_bytes()),
+                    trailers: vec![],
+                }
+            },
+        }
+    }
+}
+
+fn miss_nonce() -> Response {
+    Response {
+        code: 400,
+        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+        body: Some("missing nonce".to_string().into_bytes()),
+        trailers: vec![],
+    }
+}
+
 impl HttpHook for Hook {
     async fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
         let Some(path) = self.ctx.get_http_request_header(":path").unwrap() else {
@@ -148,9 +204,9 @@ impl HttpHook for Hook {
             "/api/difficulty" => {
                 let last_hash = {
                     get_btc().read()
-                        .expect("failed to read BTC")
+                        .map_err(|s| Error::other("failed to get lock", s))?
                         .get_latest_hash()
-                        .expect("failed to get latest hash")
+                        .ok_or(Error::status("failed to get latest hash", Status::NotFound))?
                 };
                 let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
                 let difficulty = get_difficulty(1_000_000);
@@ -158,13 +214,48 @@ impl HttpHook for Hook {
                     current,
                     difficulty 
                 };
-                Err(Response {
+                Err(Error::response(Response {
+                    code: 200,
                     headers: vec![("Content-Type".to_string(), "application/json".to_string())],
                     body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
                     trailers: vec![],
-                })
+                }))
             },
-            _ => Ok(())
+            _ => {
+                let nonce = self.ctx.get_http_request_header("X-Nonce")
+                    .map_err(|s| Error::status("failed to get nonce", s))?
+                    .ok_or(Error::response(miss_nonce()))?;
+                let data = self.ctx.get_http_request_header("X-Data")
+                    .map_err(|s| Error::status("failed to get data", s))?
+                    .ok_or(Error::response(Response {
+                        code: 400,
+                        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                        body: Some("missing data".to_string().into_bytes()),
+                        trailers: vec![],
+                    }))?;
+                
+                let difficulty = get_difficulty(1_000);
+                let nonce = hex::decode(nonce)
+                    .map_err(|s| Error::response(
+                        Response {
+                            code: 400,
+                            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                            body: Some(format!("invalid nonce: {}", s).into_bytes()),
+                            trailers: vec![],
+                        }
+                    ))?;
+                    
+                if valid_nonce(data.as_bytes(), difficulty, &nonce) {
+                    Ok(())
+                } else {
+                    Err(Error::response(Response {
+                        code: 400,
+                        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                        body: Some("invalid nonce".to_string().into_bytes()),
+                        trailers: vec![],
+                    }))
+                }
+            }
         }
     }
 }

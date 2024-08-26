@@ -1,6 +1,7 @@
 pub mod runtime;
 pub mod chain;
 
+use chain::bytearray32::ByteArray32;
 use log::info;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
@@ -9,8 +10,7 @@ use runtime::HookHolder;
 use runtime::HttpHook;
 use runtime::Response;
 use runtime::{Runtime, RuntimeBox};
-use std::fmt::Formatter;
-use std::fmt::LowerHex;
+use sha2::Digest;
 use std::sync::OnceLock;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -113,54 +113,6 @@ impl From<u32> for Hook {
     }
 }
 
-struct Sha256([u8; 32]);
-
-impl TryFrom<&str> for Sha256 {
-    type Error = &'static str;
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        if s.len() != 64 {
-            return Err("invalid length");
-        }
-        let mut bytes = [0; 32];
-        for i in 0..32 {
-            let start = i * 2;
-            let end = start + 2;
-            let byte = u8::from_str_radix(&s[start..end], 16).map_err(|_| "invalid hex")?;
-            bytes[i] = byte;
-        }
-        Ok(Sha256(bytes))
-    }
-}
-
-impl serde::Serialize for Sha256 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&format!("{:x}", self))
-    }
-}
-
-impl <'de> serde::Deserialize<'de> for Sha256 {
-    fn deserialize<D>(deserializer: D) -> Result<Sha256, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Sha256::try_from(s.as_str()).map_err(serde::de::Error::custom)
-    }
-}
-
-impl LowerHex for Sha256 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
-    }
-}
-
 fn transform_u64_to_u8_array(mut value: u64) -> [u8; 8] {
     let mut result = [0; 8];
     for i in 0..8 {
@@ -172,40 +124,57 @@ fn transform_u64_to_u8_array(mut value: u64) -> [u8; 8] {
 
 /// Get the difficulty target as a big-endian 256-bit number.
 /// The `level` parameter represents the number of leading zero bits required.
-fn get_difficulty(level: u64) -> Sha256 {
+fn get_difficulty(level: u64) -> ByteArray32 {
     let mut difficulty = [0xff; 32];
     let initial = u64::MAX / level;
     let initial_bytes = transform_u64_to_u8_array(initial);
     difficulty[0..8].clone_from_slice(&initial_bytes);
-    Sha256(difficulty)
+    (&difficulty).into()
 }
 
 #[derive(serde::Serialize)]
 struct DifficultyResponse {
-    current: Sha256,
-    difficulty: Sha256,
+    current: ByteArray32,
+    difficulty: ByteArray32,
 }
 
 impl HttpHook for Hook {
-    async fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Result<(), Response> {
-        if let Some(path) = self.ctx.get_http_request_header(":path") {
-            if path == "/api/difficulty" {
-                let last_hash = get_btc().read().expect("failed to read BTC").get_latest_hash().expect("failed to get latest hash");
+    async fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
+        let Some(path) = self.ctx.get_http_request_header(":path").unwrap() else {
+            return Ok(())
+        };
+
+        return match path.as_str() {
+            "/api/difficulty" => {
+                let last_hash = {
+                    get_btc().read()
+                        .expect("failed to read BTC")
+                        .get_latest_hash()
+                        .expect("failed to get latest hash")
+                };
                 let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
                 let difficulty = get_difficulty(1_000_000);
                 let body = DifficultyResponse { 
                     current,
                     difficulty 
                 };
-                return Err(Response {
+                Err(Response {
                     headers: vec![("Content-Type".to_string(), "application/json".to_string())],
                     body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
                     trailers: vec![],
-                });
-            }
+                })
+            },
+            _ => Ok(())
         }
-        let headers = self.ctx.get_http_request_headers();
-        info!("request headers: {:?}", headers);
-        Ok(())
     }
+}
+
+fn valid_nonce(data: &[u8], difficulty: ByteArray32, nonce: &[u8]) -> bool {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data);
+    hasher.update(nonce);
+    let hash = hasher.finalize();
+    let slice: &[u8; 32] = &hash.into();
+    let target: ByteArray32 = slice.into();
+    target <= difficulty
 }

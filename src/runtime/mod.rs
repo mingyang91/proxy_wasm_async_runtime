@@ -191,6 +191,7 @@ impl <R: Runtime> RootContext for RuntimeBox<R> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Ctx { id: u32 }
 
 impl Context for Ctx {}
@@ -201,18 +202,33 @@ impl Ctx {
     pub fn new(id: u32) -> Self {
         Self { id }
     }
-    pub fn get_http_request_headers(&self) -> Vec<(String, String)> {
-        hostcalls::set_effective_context(self.id).expect("failed to set effective context");
-        HttpContext::get_http_request_headers(self)
+    pub fn get_http_request_headers(&self) -> Result<Vec<(String, String)>, Status> {
+        hostcalls::set_effective_context(self.id)?;
+        Ok(HttpContext::get_http_request_headers(self))
+    }
+
+    pub fn get_http_request_header(&self, key: &str) -> Result<Option<String>, Status> {
+        hostcalls::set_effective_context(self.id)?;
+        Ok(HttpContext::get_http_request_header(self, key))
+    }
+
+    fn continue_request(&self) -> Result<(), Status> {
+        hostcalls::set_effective_context(self.id)?;
+        hostcalls::resume_http_request()
+    }
+
+    fn reject_request(&self, status: u32, headers: Vec<(&str, &str)>, body: Option<&[u8]>) -> Result<(), Status> {
+        hostcalls::set_effective_context(self.id)?;
+        hostcalls::send_http_response(status, headers, body)
     }
 }
 
 pub trait HttpHook {
-    fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> impl Future<Output = Result<(), Response>> + Send;
+    fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> impl Future<Output = Result<(), impl Into<Response>>> + Send;
 }
 
 pub struct HookHolder<H: HttpHook + 'static> {
-    context_id: u32,
+    context: Ctx,
     inner: Rc<RefCell<H>>,
 }
 
@@ -220,7 +236,7 @@ impl <H: HttpHook + From<u32> + 'static> HookHolder<H> {
     pub fn new(context_id: u32) -> Self {
         info!("new http context: {}", context_id);
         Self {
-            context_id,
+            context: Ctx::new(context_id),
             inner: Rc::new(RefCell::new(context_id.into())),
         }
     }
@@ -232,20 +248,17 @@ impl <H: HttpHook> HttpContext for HookHolder<H> {
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         info!("on_http_request_headers");
         let hook = self.inner.clone();
-        let context_id = self.context_id;
+        let ctx = self.context;
         spawn_local(async move {
-            hostcalls::set_effective_context(context_id).expect("failed to set effective context");
-            let res = hook.borrow_mut().on_request_headers(_num_headers, _end_of_stream).await;
-            hostcalls::set_effective_context(context_id).expect("failed to set effective context");
+            let mut hook = hook.borrow_mut();
+            let res = hook.on_request_headers(_num_headers, _end_of_stream).await;
             let ret = match res {
-                Ok(()) => { 
-                    info!("resume http request: {}", context_id);
-                    hostcalls::resume_http_request() 
-                },
+                Ok(()) => ctx.continue_request(),
                 Err(resp) => {
+                    let resp = resp.into();
                     let headers: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                     info!("reject http request");
-                    hostcalls::send_http_response(400, headers, resp.body.as_deref())
+                    ctx.reject_request(400, headers, resp.body.as_deref())
                 },
             };
             if let Err(e) = ret {

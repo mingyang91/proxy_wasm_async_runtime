@@ -1,0 +1,51 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kong
+spec:
+  gatewayClassName: kong
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wallet-create-kong
+  annotations:
+    konghq.com/strip-path: 'true'
+    # konghq.com/plugins: rate-limit-global,rate-limit-wallet-create
+    konghq.com/plugins: rate-limit-wallet-create
+spec:
+  parentRefs:
+  - name: kong
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /wallet
+    backendRefs:
+    - name: echo
+      kind: Service
+      port: 1027
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: list-assets-kong
+  annotations:
+    konghq.com/strip-path: 'true'
+    # konghq.com/plugins: rate-limit-global
+spec:
+  parentRefs:
+  - name: kong
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /assets
+    backendRefs:
+    - name: echo
+      kind: Service
+      port: 1027

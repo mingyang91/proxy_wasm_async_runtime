@@ -1,4 +1,5 @@
 resources:
 - deployment.yaml
 - service.yaml
-- route.yaml
+- route-kong.yaml
+- route-istio.yaml

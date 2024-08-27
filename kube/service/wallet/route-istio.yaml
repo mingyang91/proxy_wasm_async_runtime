@@ -1,14 +1,25 @@
 apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: istio
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: wallet-create
-  annotations:
-    konghq.com/strip-path: 'true'
-    # konghq.com/plugins: rate-limit-global,rate-limit-wallet-create
-    konghq.com/plugins: rate-limit-wallet-create
+  name: wallet-create-istio
+  annotations: []
 spec:
   parentRefs:
-  - name: kong
+  - name: istio
   rules:
   - matches:
     - path:
@@ -22,13 +33,11 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: list-assets
-  annotations:
-    konghq.com/strip-path: 'true'
-    # konghq.com/plugins: rate-limit-global
+  name: list-assets-istio
+  annotations: []
 spec:
   parentRefs:
-  - name: kong
+  - name: istio
   rules:
   - matches:
     - path:

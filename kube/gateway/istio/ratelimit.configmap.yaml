@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+data:
+  config.yaml: |
+    domain: ratelimit
+    descriptors:
+    - key: PATH
+      value: "/wallet"
+      rate_limit:
+        unit: minute
+        requests_per_unit: 3
+    - key: PATH
+      value: "/assets"
+      rate_limit:
+        unit: minute
+        requests_per_unit: 10
+    - key: PATH
+      rate_limit:
+        unit: minute
+        requests_per_unit: 100

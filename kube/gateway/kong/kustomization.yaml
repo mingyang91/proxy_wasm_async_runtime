@@ -1,0 +1,6 @@
+namespace: kong
+resources:
+- rate-limit-global.plugin.yaml
+- rate-limit-wallet-create.plugin.yaml
+- gatewayclass.yaml
+- https://github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.1.0

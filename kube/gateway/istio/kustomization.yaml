@@ -1,0 +1,5 @@
+namespace: istio-system
+resources:
+- ratelimit.configmap.yaml
+- ratelimit.service.yaml
+- rate-limit.envoy-filter.yaml

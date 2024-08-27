@@ -10,7 +10,7 @@ data:
       value: "/wallet"
       rate_limit:
         unit: minute
-        requests_per_unit: 1
+        requests_per_unit: 3
     - key: PATH
       value: "/assets"
       rate_limit:

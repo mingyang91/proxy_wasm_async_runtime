@@ -6,7 +6,7 @@ spec:
   workloadSelector:
     # select by label in the same namespace
     labels:
-      istio: ingressgateway
+      istio: gate
   configPatches:
     # The Envoy config you want to modify
     - applyTo: HTTP_FILTER

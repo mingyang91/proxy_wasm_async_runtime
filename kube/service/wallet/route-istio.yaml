@@ -47,3 +47,41 @@ spec:
     - name: echo
       kind: Service
       port: 1027
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: wallet-gateway
+spec:
+  # The selector matches the ingress gateway pod labels.
+  # If you installed Istio using Helm following the standard documentation, this would be "istio=ingress"
+  selector:
+    istio: gate
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: wallet
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - wallet-gateway
+  http:
+  - match:
+    - uri:
+        exact: /wallet
+    - uri:
+        prefix: /assets
+    route:
+    - destination:
+        host: echo
+        port:
+          number: 1027

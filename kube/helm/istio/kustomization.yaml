@@ -1,0 +1,21 @@
+resources:
+- namespace.yaml
+helmCharts:
+- name: base
+  namespace: istio-system
+  releaseName: huginn
+  version: 1.23.0
+  repo: https://istio-release.storage.googleapis.com/charts
+  includeCRDs: true
+- name: istiod
+  namespace: istio-system
+  releaseName: muninn
+  version: 1.23.0
+  repo: https://istio-release.storage.googleapis.com/charts
+  includeCRDs: true
+- name: gateway
+  namespace: istio-system
+  releaseName: gate
+  version: 1.23.0
+  repo: https://istio-release.storage.googleapis.com/charts
+  includeCRDs: true

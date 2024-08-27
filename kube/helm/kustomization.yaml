@@ -1,20 +1,3 @@
 resources:
-- kong.crd.yaml
-helmCharts:
-- name: ingress
-  namespace: kong
-  releaseName: gate
-  version: 0.13.1
-  repo: https://charts.konghq.com
-  includeCRDs: false
-  valuesFile: ingress.values.yaml
-  apiVersions:
-  - gateway.networking.k8s.io/v1
-
-# - name: kong
-#   namespace: kong
-#   releaseName: gate
-#   version: "2.40.0"
-#   repo: https://charts.konghq.com
-#   includeCRDs: true
-#   valuesFile: kong.values.yaml
+- kong
+- istio

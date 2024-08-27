@@ -3,3 +3,4 @@ resources:
 - ratelimit.configmap.yaml
 - ratelimit.service.yaml
 - rate-limit.envoy-filter.yaml
+- rate-limit-svc.envoy-filter.yaml

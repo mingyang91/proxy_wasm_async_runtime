@@ -3,11 +3,19 @@ use std::sync::RwLock;
 
 use log::{debug, warn};
 use proxy_wasm::types::Status;
+use serde::{Deserialize, Serialize};
 
+use crate::runtime::lock::SharedDataLock;
 use crate::runtime::{timeout::sleep, Runtime};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Wukong {
+    name: String
+}
 
 pub struct BTC {
     recent_hash_list: RwLock<VecDeque<String>>,
+    data: SharedDataLock<Wukong>,
     state: RwLock<State>,
 }
 
@@ -25,8 +33,13 @@ enum State {
 
 impl BTC {
     pub fn new() -> Self {
+        let data = SharedDataLock::new(0);
+        if let Err(e) = data.initial(Wukong { name: "Sun".to_string() }) {
+            warn!("failed to initialize shared data: {:?}", e);
+        }
         Self {
             recent_hash_list: RwLock::new(VecDeque::new()),
+            data,
             state: RwLock::new(State::Initial),
         }
     }
@@ -48,7 +61,12 @@ impl BTC {
             if let Err(e) = self.update_latest_hash(runtime).await {
                 warn!("failed to update latest hash: {:?}", e);
             }
-            sleep(Duration::from_secs(10)).await;
+            // sleep(Duration::from_secs(10)).await;
+
+            let lock = self.data.lock().await
+                .expect("failed to acquire lock");
+            sleep(Duration::from_secs(1)).await;
+            warn!("data: {:?}", *lock);
         }
     }
 

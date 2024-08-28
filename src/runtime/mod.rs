@@ -1,8 +1,17 @@
+mod task {
+    mod singlethread;
+    pub(crate) use singlethread::*;
+}
+pub mod queue;
+pub mod timeout;
+pub mod lock;
+
 use core::panic;
 use std::{
     cell::RefCell, collections::HashMap, future::Future, pin::Pin, rc::Rc, task::{Poll, Waker}, time::Duration
 };
 
+use lock::{wake_tasks, QueueId};
 use log::{info, warn};
 use proxy_wasm::{
     hostcalls, traits::{Context, HttpContext, RootContext}, types::{Action, Status}
@@ -10,12 +19,6 @@ use proxy_wasm::{
 
 use crate::runtime;
 
-mod task {
-    mod singlethread;
-    pub(crate) use singlethread::*;
-}
-pub mod queue;
-pub mod timeout;
 
 /// Runs a Rust `Future` on the current thread.
 ///
@@ -190,9 +193,9 @@ impl <R: Runtime> RootContext for RuntimeBox<R> {
         self.inner.on_vm_start(_vm_configuration_size)
     }
 
-    fn on_tick(&mut self) {
-        runtime::queue::QUEUE.with(|queue| queue.on_tick());
-    }
+    fn on_queue_ready(&mut self, queue_id: u32) { wake_tasks(QueueId(queue_id)) }
+
+    fn on_tick(&mut self) { runtime::queue::QUEUE.with(|queue| queue.on_tick()) }
 }
 
 #[derive(Clone, Copy)]

@@ -25,6 +25,7 @@ impl Default for BTC {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Initial,
     Running,
@@ -55,7 +56,11 @@ impl BTC {
     pub async fn start<'a, R>(&self, runtime: &'a R) 
     where R: Runtime {
         self.turn(State::Running);
-        while let State::Running = *self.state.read().expect("failed to read state") {
+        loop {
+            { 
+                let state = *self.state.read().expect("failed to read state");
+                if State::Running == state { break; }
+            }
             debug!("poll for new block hash");
             if let Err(e) = self.update_latest_hash(runtime).await {
                 warn!("failed to update latest hash: {:?}", e);

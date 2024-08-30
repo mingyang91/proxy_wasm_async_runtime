@@ -122,7 +122,7 @@ impl BTC {
         Ok(())
     }
 
-    fn stop(&mut self) {
+    pub fn stop(&mut self) {
         self.turn(State::Stopped);
     }
 }

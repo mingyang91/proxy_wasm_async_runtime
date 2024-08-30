@@ -138,6 +138,7 @@ struct DifficultyResponse {
 enum Error {
     Status { reason: String, status: proxy_wasm::types::Status },
     Response(Response),
+    #[allow(dead_code)]
     Other { reason: String, error: Box<dyn std::error::Error> },
 }
 
@@ -150,6 +151,7 @@ impl Error {
         Error::Response(response)
     }
 
+    #[allow(dead_code)]
     fn other(reason: impl Into<String>, error: impl Into<Box<dyn std::error::Error>>) -> Self {
         Error::Other { reason: reason.into(), error: error.into() }
     }
@@ -191,7 +193,7 @@ fn miss_nonce() -> Response {
 }
 
 impl HttpHook for Hook {
-    async fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
+    async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
         let Some(path) = self.ctx.get_http_request_header(":path").unwrap() else {
             return Ok(())
         };

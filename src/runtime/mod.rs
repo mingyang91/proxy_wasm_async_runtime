@@ -173,7 +173,7 @@ impl Pendings {
     }
 
     fn insert(&self, token: u32, promise: Promise) {
-        if let Some(_) = self.inner.borrow_mut().insert(token, promise) {
+        if self.inner.borrow_mut().insert(token, promise).is_some() {
             panic!("overwriting pending promise for token: {}", token);
         }
     }
@@ -231,12 +231,12 @@ impl Ctx {
 }
 
 pub trait HttpHook {
-    fn on_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> impl Future<Output = Result<(), impl Into<Response>>> + Send;
+    fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> impl Future<Output = Result<(), impl Into<Response>>> + Send;
 }
 
 pub struct HookHolder<H: HttpHook + 'static> {
     context: Ctx,
-    inner: Rc<RefCell<H>>,
+    inner: Rc<H>,
 }
 
 impl <H: HttpHook + From<u32> + 'static> HookHolder<H> {
@@ -244,7 +244,7 @@ impl <H: HttpHook + From<u32> + 'static> HookHolder<H> {
         info!("new http context: {}", context_id);
         Self {
             context: Ctx::new(context_id),
-            inner: Rc::new(RefCell::new(context_id.into())),
+            inner: Rc::new(context_id.into()),
         }
     }
 }
@@ -257,7 +257,6 @@ impl <H: HttpHook> HttpContext for HookHolder<H> {
         let hook = self.inner.clone();
         let ctx = self.context;
         spawn_local(async move {
-            let mut hook = hook.borrow_mut();
             let res = hook.on_request_headers(_num_headers, _end_of_stream).await;
             let ret = match res {
                 Ok(()) => ctx.continue_request(),

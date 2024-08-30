@@ -21,11 +21,11 @@ impl <const N: usize> TryFrom<&str> for FixedByteArray<N> {
             return Err("invalid length");
         }
         let mut bytes = [0; N];
-        for i in 0..N {
+        for (i, item) in bytes.iter_mut().enumerate() {
             let start = i * 2;
             let end = start + 2;
-            let byte = u8::from_str_radix(&s[start..end], 16).map_err(|_| "invalid hex")?;
-            bytes[i] = byte;
+            *item = u8::from_str_radix(&s[start..end], 16)
+                .map_err(|_| "invalid hex")?;
         }
         Ok(FixedByteArray(bytes))
     }

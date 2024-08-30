@@ -87,7 +87,7 @@ impl Future for Promise {
             if waker.is_none() {
                 *waker = Some(_cx.waker().clone());
             }
-            return Poll::Pending;
+            Poll::Pending
         } else if let InnerPromise::Rejected = *inner {
             return Poll::Ready(Err(()));
         } else if let InnerPromise::Gone(()) = *inner {

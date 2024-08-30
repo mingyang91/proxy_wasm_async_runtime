@@ -47,8 +47,7 @@ impl BTC {
     pub fn get_latest_hash(&self) -> Option<String> {
         self.recent_hash_list.read()
             .expect("failed to read recent hash list")
-            .front()
-            .map(|s| s.clone())
+            .front().cloned()
     }
 
     // curl -sSL "https://mempool.space/api/blocks/tip/hash"

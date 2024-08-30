@@ -145,9 +145,6 @@ pub struct SharedDataLock<S> {
     queue_id: QueueId,
     /// A unique key associated with the shared data type.
     key: &'static str,
-    /// A counter used for managing concurrency, following the
-    /// compare-and-swap (CAS) model.
-    cas: u32,
     _phantom: PhantomData<S>,
 }
 
@@ -217,7 +214,6 @@ impl<S: 'static> SharedDataLock<S> {
             context_id,
             queue_id,
             key,
-            cas: 0,
             _phantom: PhantomData,
         }
     }
@@ -281,7 +277,7 @@ where
     }
 }
 
-fn get_shared_data<T: DeserializeOwned>(key: &str) -> Result<(Option<T>, Option<u32>), Error> {
+pub fn get_shared_data<T: DeserializeOwned>(key: &str) -> Result<(Option<T>, Option<u32>), Error> {
     let (raw, cas) = hostcalls::get_shared_data(key)
         .map_err(|status| Error::status("failed to get shared data".to_string(), status))?;
 
@@ -379,6 +375,6 @@ mod test {
     #[test]
     fn test_shared_data_lock() {
         let json = "{\"state\":{\"type\":\"Unlocked\"},\"data\":{\"name\":\"Sun\"}}";
-        let data: Store<Wukong> = serde_json::from_str(json).expect("failed to deserialize shared data");
+        let _data: Store<Wukong> = serde_json::from_str(json).expect("failed to deserialize shared data");
     }
 }

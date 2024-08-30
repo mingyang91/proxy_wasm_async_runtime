@@ -12,14 +12,13 @@ use runtime::Response;
 use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
 use std::sync::OnceLock;
-use std::sync::RwLock;
 use std::time::Duration;
 use chain::btc::BTC;
 
-static BTC: OnceLock<RwLock<BTC>> = OnceLock::new();
+static BTC: OnceLock<BTC> = OnceLock::new();
 
-fn get_btc() -> &'static RwLock<BTC> {
-    BTC.get_or_init(|| RwLock::new(BTC::new()))
+fn get_btc() -> &'static BTC {
+    BTC.get_or_init(BTC::new)
 }
 
 proxy_wasm::main! {{
@@ -91,10 +90,7 @@ impl Runtime for Plugin {
         info!("Hello from WASM");
         let this = self.clone();
         runtime::spawn_local(async move {
-            get_btc()
-                .read()
-                .expect("failed to read BTC")
-                .start(&this).await;
+            get_btc().start(&this).await;
         });
         true
     }
@@ -159,9 +155,9 @@ impl Error {
     }
 }
 
-impl Into<Response> for Error {
-    fn into(self) -> Response {
-        match self {
+impl From<Error> for Response {
+    fn from(val: Error) -> Self {
+        match val {
             Error::Response(response) => response,
             Error::Status { reason, status } => {
                 let msg = format!("{}: {:?}", reason, status);
@@ -203,8 +199,7 @@ impl HttpHook for Hook {
         return match path.as_str() {
             "/api/difficulty" => {
                 let last_hash = {
-                    get_btc().read()
-                        .map_err(|s| Error::other("failed to get lock", s))?
+                    get_btc()
                         .get_latest_hash()
                         .ok_or(Error::status("failed to get latest hash", Status::NotFound))?
                 };
@@ -244,7 +239,7 @@ impl HttpHook for Hook {
                             trailers: vec![],
                         }
                     ))?;
-                    
+
                 if valid_nonce(data.as_bytes(), difficulty, &nonce) {
                     Ok(())
                 } else {

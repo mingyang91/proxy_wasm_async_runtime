@@ -8,14 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::runtime::lock::SharedDataLock;
 use crate::runtime::{timeout::sleep, Runtime};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Wukong {
-    name: String
-}
-
 pub struct BTC {
-    recent_hash_list: RwLock<VecDeque<String>>,
-    data: SharedDataLock<Wukong>,
+    recent_hash_list: SharedDataLock<VecDeque<String>>,
     state: RwLock<State>,
 }
 
@@ -34,21 +28,22 @@ enum State {
 
 impl BTC {
     pub fn new() -> Self {
-        let data = SharedDataLock::new(0);
-        if let Err(e) = data.initial(Wukong { name: "Sun".to_string() }) {
-            warn!("failed to initialize shared data: {:?}", e);
+        let recent_hash_list = SharedDataLock::new(0);
+        if let Err(e) = recent_hash_list.initial(VecDeque::new()) {
+            log::info!("failed to initialize shared data: {:?}", e);
         }
         Self {
-            recent_hash_list: RwLock::new(VecDeque::new()),
-            data,
+            recent_hash_list,
             state: RwLock::new(State::Initial),
         }
     }
 
     pub fn get_latest_hash(&self) -> Option<String> {
-        self.recent_hash_list.read()
+        self.recent_hash_list
+            .read()
             .expect("failed to read recent hash list")
-            .front().cloned()
+            .front()
+            .cloned()
     }
 
     // curl -sSL "https://mempool.space/api/blocks/tip/hash"
@@ -59,18 +54,20 @@ impl BTC {
         loop {
             { 
                 let state = *self.state.read().expect("failed to read state");
-                if State::Running == state { break; }
+                if State::Running != state { 
+                    log::info!("exit polling loop");
+                    break; 
+                }
             }
-            debug!("poll for new block hash");
+            log::debug!("poll for new block hash");
             if let Err(e) = self.update_latest_hash(runtime).await {
                 warn!("failed to update latest hash: {:?}", e);
             }
-            // sleep(Duration::from_secs(10)).await;
 
-            let lock = self.data.lock().await
+            let lock = self.recent_hash_list.lock().await
                 .expect("failed to acquire lock");
-            sleep(Duration::from_secs(1)).await;
-            warn!("data: {:?}", *lock);
+            sleep(Duration::from_secs(10)).await;
+            debug!("data: {:?}", *lock);
         }
     }
 
@@ -110,7 +107,7 @@ impl BTC {
                 Status::InternalFailure
             })?;
 
-        let mut recent_hash_list = self.recent_hash_list.write().expect("failed to write recent hash list");
+        let mut recent_hash_list = self.recent_hash_list.lock().await.expect("failed to write recent hash list");
         debug!("response body: {}", body_str);
         if recent_hash_list.contains(&body_str) {
             return Ok(());

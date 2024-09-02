@@ -115,6 +115,9 @@ pub enum Error {
         status: proxy_wasm::types::Status,
     },
 
+    #[error("shared data is uninitialized")]
+    Uninitialized,
+
     #[error("CAS mismatch")]
     CasMismatch,
 
@@ -236,6 +239,15 @@ impl<S: 'static> SharedDataLock<S> {
     /// Acquire a lock on the shared data.
     pub fn lock(&self) -> TryLock<S> {
         TryLock { lock: self, gone: false }
+    }
+
+    pub fn read(&self) -> Result<S, Error> 
+    where S: Serialize + DeserializeOwned {
+        match get_shared_data::<Store<S>>(self.key) {
+            Ok((Some(store), _)) => Ok(store.data),
+            Ok((None, _)) => Err(Error::Uninitialized),
+            Err(err) => Err(err),
+        }
     }
 }
 

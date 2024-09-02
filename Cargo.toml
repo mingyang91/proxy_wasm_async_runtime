@@ -3,9 +3,8 @@ name = "pow-waf"
 version = "0.1.0"
 edition = "2021"
 
-[build]
-target = "wasm32-wasi"
-
+[lints.clippy]
+all = "allow"
 
 [lib]
 crate-type = ["cdylib"]

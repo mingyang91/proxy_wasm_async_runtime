@@ -5,6 +5,12 @@ pub type ByteArray32 = FixedByteArray<32>;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 pub struct FixedByteArray<const N: usize>([u8; N]);
 
+impl <const N: usize> FixedByteArray<N> {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl <const N: usize> From<&[u8; N]> for FixedByteArray<N> {
     fn from(bytes: &[u8; N]) -> Self {
         let mut result = [0; N];

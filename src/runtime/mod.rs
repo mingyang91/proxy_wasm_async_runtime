@@ -5,6 +5,8 @@ mod task {
 pub mod queue;
 pub mod timeout;
 pub mod lock;
+pub mod route;
+pub mod kv_store;
 
 use core::panic;
 use std::{
@@ -208,6 +210,19 @@ impl HttpContext for Ctx {}
 impl Ctx {
     pub fn new(id: u32) -> Self {
         Self { id }
+    }
+
+    pub fn get_client_address(&self) -> Result<Option<String>, Status> {
+        hostcalls::set_effective_context(self.id)?;
+        let Some(raw_property) = hostcalls::get_property(vec!["source", "address"])? else {
+            return Ok(None);
+        };
+        let addr = String::from_utf8(raw_property)
+            .map_err(|e| {
+                warn!("failed to parse client address: {}", e);
+                Status::InternalFailure
+            })?;
+        Ok(Some(addr))
     }
     pub fn get_http_request_headers(&self) -> Result<Vec<(String, String)>, Status> {
         hostcalls::set_effective_context(self.id)?;

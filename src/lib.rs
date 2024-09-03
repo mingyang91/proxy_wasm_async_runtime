@@ -3,6 +3,7 @@ pub mod chain;
 
 use chain::bytearray32::ByteArray32;
 use log::info;
+use proxy_wasm::hostcalls;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use runtime::Ctx;
@@ -194,9 +195,22 @@ fn miss_nonce() -> Response {
 
 impl HttpHook for Hook {
     async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
-        let Some(path) = self.ctx.get_http_request_header(":path").unwrap() else {
+        let Some(path) = self.ctx.get_http_request_header(":path")
+            .map_err(|s| Error::status("failed to get path", s))? else {
             return Ok(())
         };
+
+        let Some(addr) = self.ctx.get_client_address()
+            .map_err(|s| Error::status("failed to get client address", s))? else {
+            return Err(Error::response(Response {
+                code: 403,
+                headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                body: Some("forbidden".to_string().into_bytes()),
+                trailers: vec![],
+            }));
+        };
+
+        log::info!("request from: {}", addr);
 
         return match path.as_str() {
             "/api/difficulty" => {
@@ -265,4 +279,36 @@ fn valid_nonce(data: &[u8], difficulty: ByteArray32, nonce: &[u8]) -> bool {
     let slice: &[u8; 32] = &hash.into();
     let target: ByteArray32 = slice.into();
     target <= difficulty
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{chain::bytearray32::ByteArray32, valid_nonce};
+
+    #[test]
+    fn mine() {
+        let last: ByteArray32 = "000000000000000000010915948e0d6b2c40aa4144ed4277f978e231f4c44732"
+            .try_into()
+            .expect("failed to parse last hash");
+        // 000010c6f7a0b5edffffffffffffffffffffffffffffffffffffffffffffffff
+        let difficulty: ByteArray32 = "000010c6f7a0b5edffffffffffffffffffffffffffffffffffffffffffffffff"
+            .try_into()
+            .expect("failed to parse difficulty");
+
+        loop {
+            let nonce = rand::random::<[u8; 8]>();
+            if valid_nonce(last.as_bytes(), difficulty, &nonce) {
+                print!("found nonce:");
+                print_hex(&nonce);
+                println!();
+                break;
+            }
+        }
+    }
+
+    fn print_hex(bytes: &[u8]) {
+        for byte in bytes {
+            print!("{:02x}", byte);
+        }
+    }
 }

@@ -5,14 +5,17 @@ use chain::bytearray32::ByteArray32;
 use log::info;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
+use runtime::counter_bucket::CounterBucket;
 use runtime::route::config::Config;
 use runtime::route::config::Router;
 use runtime::route::config::Setting;
+use runtime::route::config::CIDR;
 use runtime::Ctx;
 use runtime::HttpHook;
 use runtime::Response;
 use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use chain::btc::BTC;
@@ -26,14 +29,23 @@ fn get_btc() -> &'static BTC {
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
 
-    proxy_wasm::set_root_context(move |_| -> Box<dyn RootContext> { 
-        Box::new(RuntimeBox::new(Plugin { router: None }))
+    proxy_wasm::set_root_context(move |context_id| -> Box<dyn RootContext> { 
+        Box::new(RuntimeBox::new(Plugin { context_id, inner: None }))
     });
 }}
 
+
+struct Inner {
+    router: Router<Setting>,
+    counter_bucket: CounterBucket,
+    whitelist: Vec<CIDR>,
+    difficulty: u64,
+}
+
 #[derive(Clone)]
 struct Plugin {
-    router: Option<Arc<Router<Setting>>>
+    context_id: u32,
+    inner: Option<Arc<Inner>>,
 }
 
 impl Context for Plugin {}
@@ -52,13 +64,16 @@ impl Runtime for Plugin {
             return false
         };
 
-        let config: Config<Setting> = match serde_yaml::from_slice(&config_bytes) {
+        let mut config: Config<Setting> = match serde_yaml::from_slice(&config_bytes) {
             Ok(config) => config,
             Err(e) => {
                 log::error!("failed to parse configuration: {}\n raw config: {}", e, String::from_utf8(config_bytes).expect("failed to read raw config into utf8 string"));
                 return false;
             }
         };
+
+        let whitelist = config.whitelist.take().unwrap_or_default();
+        let difficulty = config.difficulty;
 
         let router: Router<Setting> = match config.try_into() {
             Ok(router) => router,
@@ -68,7 +83,12 @@ impl Runtime for Plugin {
             }
         };
 
-        self.router = Some(Arc::new(router));
+        self.inner = Some(Arc::new(Inner {
+            router,
+            counter_bucket: CounterBucket::new(self.context_id, "rate_limit"),
+            whitelist,
+            difficulty,
+        }));
         true
     }
     
@@ -77,7 +97,7 @@ impl Runtime for Plugin {
     fn create_http_context(&self, _context_id: u32) -> Option<Self::Hook> {
         Some(Hook { 
             ctx: Ctx::new(_context_id),
-            router: self.router.as_ref().expect("router not initialized").clone(),
+            plugin: self.inner.clone().expect("plugin not initialized"),
         })
     }
 }
@@ -85,7 +105,7 @@ impl Runtime for Plugin {
 
 pub struct Hook { 
     ctx: Ctx,
-    router: Arc<Router<Setting>>,
+    plugin: Arc<Inner>,
 }
 
 fn transform_u64_to_u8_array(mut value: u64) -> [u8; 8] {
@@ -162,18 +182,18 @@ impl From<Error> for Response {
     }
 }
 
-fn too_many_request() -> Error {
+fn too_many_request(difficulty: u64) -> Error {
     let Some(last_hash) = get_btc().get_latest_hash() else {
         return Error::status("failed to get latest hash", Status::NotFound)
     };
     let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
-    let difficulty = get_difficulty(1_000_000);
+    let target = get_difficulty(difficulty);
     let body = DifficultyResponse {
         current,
-        difficulty
+        difficulty: target
     };
     Error::response(Response {
-        code: 200,
+        code: 409,
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
         trailers: vec![],
@@ -208,28 +228,43 @@ impl HttpHook for Hook {
 
     async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
         let addr = self.get_client_address()?;
-        log::info!("request from: {}", addr);
-
+        let addr: SocketAddr = addr.parse().map_err(|s| forbidden(format!("invalid client address {}: {}", s, addr)))?;
+        if self.plugin.whitelist.iter().any(|cidr| cidr.contains(addr.ip())) {
+            return Ok(());
+        }
         let host = self.get_header(":authority")?;
         let path = self.get_header(":path")?;
 
-        let Some(found) = self.router.matches(&host, &path) else {
+        let Some(found) = self.plugin.router.matches(&host, &path) else {
             return Ok(())
         };
 
+        let key = format!("{}:{}:{}{}", addr.ip(), found.rate_limit.current_bucket(), host, found.pattern());
+        let counter = self.plugin.counter_bucket.get(&key).map_err(|s| Error::other("failed to get counter", s))?;
+        let difficulty = counter / found.rate_limit.requests_per_unit as u64 * self.plugin.difficulty;
+        log::debug!("key: {}, counter: {}, difficulty: {}", key, counter, difficulty);
+
         return match path.as_str() {
-            "/api/difficulty" => Err(too_many_request()),
+            "/api/difficulty" => Err(too_many_request(difficulty)),
             _ => {
-                let nonce = self.get_header("X-Nonce")?;
+                if difficulty == 0 {
+                    self.plugin.counter_bucket.inc(&key, 1);
+                    return Ok(());
+                }
+
+                let target = get_difficulty(difficulty);
+
+                let nonce = self.get_header("X-Nonce")
+                    .map_err(|_| too_many_request(difficulty))?;
+
                 let nonce = hex::decode(nonce)
                     .map_err(|s| forbidden(format!("invalid nonce: {}", s)))?;
 
-                let data = self.get_header("X-Data")?;
-                
-                let difficulty = get_difficulty(1_000);
+                let data = self.get_header("X-Data")
+                    .map_err(|_| too_many_request(difficulty))?;
 
-
-                if valid_nonce(data.as_bytes(), difficulty, &nonce) {
+                if valid_nonce(data.as_bytes(), target, &nonce) {
+                    self.plugin.counter_bucket.inc(&key, 1);
                     Ok(())
                 } else {
                     Err(Error::response(Response {

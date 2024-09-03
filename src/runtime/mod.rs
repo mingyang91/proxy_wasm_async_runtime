@@ -15,7 +15,6 @@ use std::{
 };
 
 use lock::{wake_tasks, QueueId};
-use log::{info, warn};
 use proxy_wasm::{
     hostcalls, traits::{Context, HttpContext, RootContext}, types::{Action, Status}
 };
@@ -241,7 +240,7 @@ impl Ctx {
         };
         let addr = String::from_utf8(raw_property)
             .map_err(|e| {
-                warn!("failed to parse client address: {}", e);
+                log::warn!("failed to parse client address: {}", e);
                 Status::InternalFailure
             })?;
         Ok(Some(addr))
@@ -294,7 +293,7 @@ impl <H: HttpHook> Context for HookHolder<H> {}
 
 impl <H: HttpHook> HttpContext for HookHolder<H> {
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
-        info!("on_http_request_headers");
+        log::debug!("on_http_request_headers");
         let hook = self.inner.clone();
         let ctx = self.context;
         spawn_local(async move {
@@ -304,19 +303,19 @@ impl <H: HttpHook> HttpContext for HookHolder<H> {
                 Err(resp) => {
                     let resp = resp.into();
                     let headers: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-                    info!("reject http request");
+                    log::debug!("reject http request");
                     ctx.reject_request(400, headers, resp.body.as_deref())
                 },
             };
             if let Err(e) = ret {
-                warn!("failed to resume http request: {:?}", e);
+                log::warn!("failed to resume http request: {:?}", e);
             }
         });
         Action::Pause
     }
 
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
-        info!("on_http_response_headers");
+        log::debug!("on_http_response_headers");
         self.set_http_response_header("X-Filter-Name", Some("PoW"));
         Action::Continue
     }

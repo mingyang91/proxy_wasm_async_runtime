@@ -76,11 +76,11 @@ static_resources:
                                   - path: "/*"
                                     rate_limit:
                                       unit: minute
-                                      requests_per_unit: 200
+                                      requests_per_unit: 10
                                   - path: "/ip"
                                     rate_limit:
                                       unit: minute
-                                      requests_per_unit: 100
+                                      requests_per_unit: 3
                         vm_config:
                           runtime: "envoy.wasm.runtime.v8"
                           code:
@@ -101,8 +101,8 @@ static_resources:
             - endpoint:
                 address:
                   socket_address:
-                    address: httpbin
-                    port_value: 8080
+                    address: httpbin.org
+                    port_value: 80
   - name: mempool
     connect_timeout: 30s
     type: LOGICAL_DNS

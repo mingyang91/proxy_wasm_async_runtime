@@ -75,15 +75,34 @@ pub enum TimeUnit {
     Day,
 }
 
+impl TimeUnit {
+    fn as_secs(&self) -> u64 {
+        match self {
+            TimeUnit::Second => 1,
+            TimeUnit::Minute => 60,
+            TimeUnit::Hour => 3600,
+            TimeUnit::Day => 86400,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RateLimit {
-    unit: TimeUnit,
-    requests_per_unit: u32,
+    pub unit: TimeUnit,
+    pub requests_per_unit: u32,
+}
+
+impl RateLimit {
+    pub fn current_bucket(&self) -> u64 {
+        let unit: u64 = self.unit.as_secs();
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs();
+        timestamp / unit
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Setting {
-    rate_limit: RateLimit,
+    pub rate_limit: RateLimit,
 }
 
 #[derive(Debug, Eq, PartialEq)]

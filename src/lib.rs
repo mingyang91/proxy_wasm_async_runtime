@@ -9,12 +9,11 @@ use runtime::route::config::Config;
 use runtime::route::config::Router;
 use runtime::route::config::Setting;
 use runtime::Ctx;
-use runtime::HookHolder;
 use runtime::HttpHook;
 use runtime::Response;
 use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use chain::btc::BTC;
 
@@ -28,16 +27,13 @@ proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
 
     proxy_wasm::set_root_context(move |_| -> Box<dyn RootContext> { 
-        Box::new(RuntimeBox::new(Plugin { router: Rc::new(None) }))
+        Box::new(RuntimeBox::new(Plugin { router: None }))
     });
-    proxy_wasm::set_http_context(|context_id, _| -> Box<dyn HttpContext> { 
-        Box::new(HookHolder::<Hook>::new(context_id))
-     });
 }}
 
 #[derive(Clone)]
 struct Plugin {
-    router: Rc<Option<Router<Setting>>>
+    router: Option<Arc<Router<Setting>>>
 }
 
 impl Context for Plugin {}
@@ -72,22 +68,24 @@ impl Runtime for Plugin {
             }
         };
 
-        self.router = Rc::new(Some(router));
+        self.router = Some(Arc::new(router));
         true
+    }
+    
+    type Hook = Hook;
+    
+    fn create_http_context(&self, _context_id: u32) -> Option<Self::Hook> {
+        Some(Hook { 
+            ctx: Ctx::new(_context_id),
+            router: self.router.as_ref().expect("router not initialized").clone(),
+        })
     }
 }
 
 
 pub struct Hook { 
     ctx: Ctx,
-}
-
-impl From<u32> for Hook {
-    fn from(id: u32) -> Self {
-        Self {
-            ctx: Ctx::new(id),
-        }
-    }
+    router: Arc<Router<Setting>>,
 }
 
 fn transform_u64_to_u8_array(mut value: u64) -> [u8; 8] {
@@ -192,39 +190,41 @@ fn forbidden(message: String) -> Error {
     })
 }
 
+impl Hook {
+    fn get_header(&self, key: &str) -> Result<String, Error> {
+        self.ctx.get_http_request_header(key)
+            .map_err(|s| Error::status(format!("failed to get header: {}", key), s))?
+            .ok_or_else(|| forbidden(format!("missing header: {}", key)))
+    }
+
+    fn get_client_address(&self) -> Result<String, Error> {
+        self.ctx.get_client_address()
+            .map_err(|s| Error::status("failed to get client address", s))?
+            .ok_or_else(|| forbidden("failed to get client address from request".to_string()))
+    }
+}
+
 impl HttpHook for Hook {
+
     async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
-        let Some(path) = self.ctx.get_http_request_header(":path")
-            .map_err(|s| Error::status("failed to get path", s))? else {
-            return Err(forbidden("failed to get path from request".to_string()));
-        };
-
-        let Some(addr) = self.ctx.get_client_address()
-            .map_err(|s| Error::status("failed to get client address", s))? else {
-            return Err(forbidden("failed to get client address from request".to_string()));
-        };
-
+        let addr = self.get_client_address()?;
         log::info!("request from: {}", addr);
+
+        let host = self.get_header(":authority")?;
+        let path = self.get_header(":path")?;
+
+        let Some(found) = self.router.matches(&host, &path) else {
+            return Ok(())
+        };
 
         return match path.as_str() {
             "/api/difficulty" => Err(too_many_request()),
             _ => {
-                let nonce = self.ctx.get_http_request_header("X-Nonce")
-                    .map_err(|s| Error::status("failed to get nonce", s))?
-                    .ok_or_else(too_many_request)?;
+                let nonce = self.get_header("X-Nonce")?;
                 let nonce = hex::decode(nonce)
-                    .map_err(|s| Error::response(
-                        Response {
-                            code: 400,
-                            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-                            body: Some(format!("invalid nonce: {}", s).into_bytes()),
-                            trailers: vec![],
-                        }
-                    ))?;
+                    .map_err(|s| forbidden(format!("invalid nonce: {}", s)))?;
 
-                let data = self.ctx.get_http_request_header("X-Data")
-                    .map_err(|s| Error::status("failed to get data", s))?
-                    .ok_or_else(too_many_request)?;
+                let data = self.get_header("X-Data")?;
                 
                 let difficulty = get_difficulty(1_000);
 

@@ -192,6 +192,12 @@ pub struct Router<T>(Trie<RadixTree<T>>);
 
 pub struct Found<'a, T>(Matches<'a, T>);
 
+impl <'a, T> Found<'a, T> {
+    pub fn pattern(&self) -> &str {
+        &self.0.data.pattern
+    }
+}
+
 impl Deref for Found<'_, Setting> {
     type Target = Setting;
 

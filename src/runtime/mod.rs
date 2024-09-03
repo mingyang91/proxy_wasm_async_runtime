@@ -105,6 +105,7 @@ impl Future for Promise {
 }
 
 pub trait Runtime: Context {
+    type Hook: HttpHook + 'static;
     fn http_call(
         &self,
         upstream: &str,
@@ -126,6 +127,8 @@ pub trait Runtime: Context {
     fn on_configure(&mut self, _configuration: Option<Vec<u8>>) -> bool {
         true
     }
+
+    fn create_http_context(&self, _context_id: u32) -> Option<Self::Hook>;
 }
 
 pub struct RuntimeBox<R: Runtime> {
@@ -208,6 +211,15 @@ impl <R: Runtime> RootContext for RuntimeBox<R> {
     fn on_queue_ready(&mut self, queue_id: u32) { wake_tasks(QueueId(queue_id)) }
 
     fn on_tick(&mut self) { runtime::queue::QUEUE.with(|queue| queue.on_tick()) }
+
+    fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
+        let hook = self.inner.create_http_context(_context_id)?;
+        Some(Box::new(HookHolder::<R::Hook>::new(_context_id, hook)))
+    }
+
+    fn get_type(&self) -> Option<proxy_wasm::types::ContextType> {
+        Some(proxy_wasm::types::ContextType::HttpContext)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -269,12 +281,11 @@ pub struct HookHolder<H: HttpHook + 'static> {
     inner: Rc<H>,
 }
 
-impl <H: HttpHook + From<u32> + 'static> HookHolder<H> {
-    pub fn new(context_id: u32) -> Self {
-        info!("new http context: {}", context_id);
+impl <H: HttpHook> HookHolder<H> {
+    pub fn new(context_id: u32, inner: H) -> Self {
         Self {
             context: Ctx::new(context_id),
-            inner: Rc::new(context_id.into()),
+            inner: Rc::new(inner),
         }
     }
 }

@@ -71,13 +71,13 @@ static_resources:
                                         rate_limit:
                                             unit: minute
                                             requests_per_unit: 100
-                              - host: "another-example.com"
+                              - host: "httpbin.org"
                                 routes:
-                                  - path: "/"
+                                  - path: "/*"
                                     rate_limit:
                                       unit: minute
                                       requests_per_unit: 200
-                                  - path: "/about"
+                                  - path: "/ip"
                                     rate_limit:
                                       unit: minute
                                       requests_per_unit: 100

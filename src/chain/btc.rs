@@ -37,6 +37,13 @@ impl BTC {
         }
     }
 
+    pub fn check_in_list(&self, hash: &str) -> bool {
+        self.recent_hash_list
+            .read()
+            .expect("failed to read recent hash list")
+            .contains(&hash.to_string())
+    }
+
     pub fn get_latest_hash(&self) -> Option<String> {
         self.recent_hash_list
             .read()

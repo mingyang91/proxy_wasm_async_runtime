@@ -302,9 +302,10 @@ impl <H: HttpHook> HttpContext for HookHolder<H> {
                 Ok(()) => ctx.continue_request(),
                 Err(resp) => {
                     let resp = resp.into();
+                    let code = resp.code;
                     let headers: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                     log::debug!("reject http request");
-                    ctx.reject_request(400, headers, resp.body.as_deref())
+                    ctx.reject_request(code, headers, resp.body.as_deref())
                 },
             };
             if let Err(e) = ret {

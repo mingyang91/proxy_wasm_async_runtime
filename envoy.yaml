@@ -50,7 +50,7 @@ static_resources:
                             whitelist:
                               - "46.3.240.0/24"
                               - "2001:db8::/32"
-                            difficulty: 1000000
+                            difficulty: 100000
                             virtual_hosts:
                               - host: "example.com"
                                 routes:

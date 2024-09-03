@@ -186,14 +186,17 @@ fn too_many_request(difficulty: u64) -> Error {
     let Some(last_hash) = get_btc().get_latest_hash() else {
         return Error::status("failed to get latest hash", Status::NotFound)
     };
-    let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
+    let current = match last_hash.as_str().try_into() {
+        Ok(ba) => ba,
+        Err(e) => panic!("{}, {}", last_hash, e)
+    };
     let target = get_difficulty(difficulty);
     let body = DifficultyResponse {
         current,
         difficulty: target
     };
     Error::response(Response {
-        code: 409,
+        code: 429,
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
         trailers: vec![],
@@ -260,10 +263,22 @@ impl HttpHook for Hook {
                 let nonce = hex::decode(nonce)
                     .map_err(|s| forbidden(format!("invalid nonce: {}", s)))?;
 
+                let last = self.get_header("X-Last")
+                    .map_err(|_| too_many_request(difficulty))?;
+
+                if !get_btc().check_in_list(&last) {
+                    return Err(too_many_request(difficulty))
+                }
+
+                let last: ByteArray32 = last.as_str().try_into()
+                    .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
+
                 let data = self.get_header("X-Data")
                     .map_err(|_| too_many_request(difficulty))?;
 
-                if valid_nonce(data.as_bytes(), target, &nonce) {
+                let mut final_data = last.as_bytes().to_vec();
+                final_data.extend(data.as_bytes());
+                if valid_nonce(&final_data, target, &nonce) {
                     self.plugin.counter_bucket.inc(&key, 1);
                     Ok(())
                 } else {
@@ -318,5 +333,12 @@ mod test {
         for byte in bytes {
             print!("{:02x}", byte);
         }
+    }
+
+    #[test]
+    fn decode() {
+        let nonce = "aaed9b41fcf6dc5";
+        let hex = hex::decode(nonce).expect("invalid hex");
+        print_hex(&hex);
     }
 }

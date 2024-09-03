@@ -7,7 +7,12 @@ edition = "2021"
 all = "allow"
 
 [lib]
+path = "src/lib.rs"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "mock_client"
+path = "examples/mock_client.rs"
 
 [features]
 default = ["bincode"]
@@ -42,3 +47,6 @@ bincode = "1.3.3"
 [dev-dependencies]
 proxy-wasm-test-framework = { git = "https://github.com/proxy-wasm/test-framework.git", branch = "main"}
 rand = "0.8"
+tokio = { version = "1.39.3", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"

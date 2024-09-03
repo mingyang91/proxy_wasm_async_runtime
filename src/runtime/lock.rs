@@ -345,18 +345,17 @@ where
 fn set_and_unlock_shared_data<T>(key: &str, queue_id: QueueId, store: &mut Store<T>) -> Result<(), Error> 
 where 
     T: Serialize + DeserializeOwned {
-    let cas = {
-        let StoreState::Locked { holder: _, time: _, cas } = &store.state else {
-            log::error!("???");
-            return Ok(())
-        };
-        *cas
+    if let StoreState::Unlocked = &store.state {
+        log::error!("???");
+        return Ok(())
     };
 
     store.turn_unlock();
     let raw = serde_json::to_vec(&store)?;
 
-    let Err(status) = hostcalls::set_shared_data(key, Some(&raw), Some(cas + 1)) else {
+    let (_, cas) = hostcalls::get_shared_data(key)
+        .map_err(|status| Error::status("failed to get cas when unlock data".to_string(), status))?;
+    let Err(status) = hostcalls::set_shared_data(key, Some(&raw), cas) else {
         hostcalls::enqueue_shared_queue(queue_id.0, None) // TODO: change me
             .map_err(|status| Error::status("failed to enqueue shared queue".to_string(), status))?;
         return Ok(())

@@ -7,6 +7,7 @@ pub mod timeout;
 pub mod lock;
 pub mod route;
 pub mod kv_store;
+pub mod counter_bucket;
 
 use core::panic;
 use std::{

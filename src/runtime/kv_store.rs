@@ -1,7 +1,7 @@
-use std::{collections::VecDeque, marker::PhantomData, time::Instant};
+use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use proxy_wasm::{hostcalls, types::Status};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub struct LowLevelKVStore {
     context_id: u32,
@@ -177,8 +177,9 @@ where
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 struct Expirations {
-    list: VecDeque<(Instant, String)>,
+    list: VecDeque<(u64, String)>,
 }
 
 impl Expirations {
@@ -188,13 +189,21 @@ impl Expirations {
         }
     }
 
-    fn push(&mut self, key: String, expiration: Instant) {
+    fn push(&mut self, key: String, ttl: Duration) {
+        let expiration = Self::now() + ttl.as_secs();
         self.list.push_back((expiration, key));
         self.list.make_contiguous().sort();
     }
 
+    fn now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
     fn pop_expired(&mut self) -> Vec<String> {
-        let now = Instant::now();
+        let now = Self::now();
         let mut expired = Vec::new();
         while let Some((expiration, key)) = self.list.front() {
             if *expiration > now {
@@ -207,3 +216,66 @@ impl Expirations {
     }
 }
 
+pub struct ExpiringKVStore<V> {
+    store: KVStore<V>,
+    expirations: KVStore<Expirations>
+}
+
+impl <V> ExpiringKVStore<V>
+where 
+    V: Codec,
+    V::Error: Into<Box<dyn std::error::Error>>
+{
+    pub fn new(context_id: u32, prefix: &str) -> Self {
+        Self {
+            store: KVStore::new(context_id, prefix),
+            expirations: KVStore::new(context_id, &format!("{}:expirations", prefix)),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Result<Option<V>, Error> {
+        self.store.get(key)
+    }
+
+    pub fn put(&self, key: &str, value: &V, ttl: Duration) -> Result<(), Error> {
+        self.store.put(key, value)?;
+        self.enqueue_expires(key, ttl)
+    }
+
+    pub fn remove(&self, key: &str) -> Result<(), Error> {
+        self.store.remove(key)
+    }
+
+    pub fn update<F>(&self, key: &str, f: F) -> Result<V, Error>
+    where
+        F: FnMut(Option<V>) -> V,
+    {
+        self.store.update(key, f)
+    }
+
+    pub fn enqueue_expires(&self, key: &str, ttl: Duration) -> Result<(), Error> {
+        let _ = self.expirations.update("", |expirations| {
+            let mut expirations = expirations.unwrap_or_else(Expirations::new);
+            expirations.push(key.to_string(), ttl);
+            expirations
+        })?;
+        self.gc()
+    }
+
+    pub fn gc(&self) -> Result<(), Error> {
+        let mut expired = vec![];
+        let _ = self.expirations.update("", |expirations| {
+            let Some(mut expirations) = expirations else {
+                return Expirations::new();
+            };
+            expired = expirations.pop_expired();
+            return expirations
+        })?;
+
+        for key in expired {
+            let _ = self.store.remove(&key)?;
+        }
+
+        Ok(())
+    }
+}

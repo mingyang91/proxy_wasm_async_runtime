@@ -5,14 +5,17 @@ use chain::bytearray32::ByteArray32;
 use log::info;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
+use runtime::route::config::Config;
+use runtime::route::config::Router;
+use runtime::route::config::Setting;
 use runtime::Ctx;
 use runtime::HookHolder;
 use runtime::HttpHook;
 use runtime::Response;
 use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
+use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::Duration;
 use chain::btc::BTC;
 
 static BTC: OnceLock<BTC> = OnceLock::new();
@@ -25,64 +28,17 @@ proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
 
     proxy_wasm::set_root_context(move |_| -> Box<dyn RootContext> { 
-        Box::new(RuntimeBox::new(Plugin {}))
+        Box::new(RuntimeBox::new(Plugin { router: Rc::new(None) }))
     });
     proxy_wasm::set_http_context(|context_id, _| -> Box<dyn HttpContext> { 
         Box::new(HookHolder::<Hook>::new(context_id))
      });
 }}
 
-#[derive(Default)]
-struct HttpAuthRandom { token: Option<u32> }
-
-impl HttpContext for HttpAuthRandom {
-    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
-        let token = self.dispatch_http_call(
-            "httpbin",
-            vec![
-                (":method", "GET"),
-                (":path", "/bytes/1"),
-                (":authority", "httpbin.org"),
-            ],
-            None,
-            vec![],
-            Duration::from_secs(1),
-        )
-        .unwrap();
-        self.token.replace(token);
-        Action::Pause
-    }
-
-    fn on_http_response_headers(&mut self, _: usize, _: bool) -> Action {
-        self.set_http_response_header("Powered-By", Some("proxy-wasm"));
-        Action::Continue
-    }
-}
-
-impl Context for HttpAuthRandom {
-    fn on_http_call_response(&mut self, token: u32, _: usize, body_size: usize, _: usize) {
-        if Some(token) != self.token {
-            return;
-        }
-        if let Some(body) = self.get_http_call_response_body(0, body_size) {
-            if !body.is_empty() && body[0] % 2 == 0 {
-                info!("Access granted.");
-                self.resume_http_request();
-                return;
-            }
-        }
-        info!("Access forbidden.");
-        self.send_http_response(
-            403,
-            vec![("Powered-By", "proxy-wasm")],
-            Some(b"Access forbidden.\n"),
-        );
-    }
-}
-
-
 #[derive(Clone)]
-struct Plugin {}
+struct Plugin {
+    router: Rc<Option<Router<Setting>>>
+}
 
 impl Context for Plugin {}
 impl Runtime for Plugin {
@@ -92,6 +48,31 @@ impl Runtime for Plugin {
         runtime::spawn_local(async move {
             get_btc().start(&this).await;
         });
+        true
+    }
+
+    fn on_configure(&mut self, configuration: Option<Vec<u8>>) -> bool {
+        let Some(config_bytes) = configuration else {
+            return false
+        };
+
+        let config: Config<Setting> = match serde_yaml::from_slice(&config_bytes) {
+            Ok(config) => config,
+            Err(e) => {
+                log::error!("failed to parse configuration: {}\n raw config: {}", e, String::from_utf8(config_bytes).expect("failed to read raw config into utf8 string"));
+                return false;
+            }
+        };
+
+        let router: Router<Setting> = match config.try_into() {
+            Ok(router) => router,
+            Err(e) => {
+                log::error!("failed to convert configuration: {}\n raw config: {}", e, String::from_utf8(config_bytes).expect("failed to read raw config into utf8 string"));
+                return false;
+            }
+        };
+
+        self.router = Rc::new(Some(router));
         true
     }
 }
@@ -183,68 +164,54 @@ impl From<Error> for Response {
     }
 }
 
-fn miss_nonce() -> Response {
-    Response {
-        code: 400,
-        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-        body: Some("missing nonce".to_string().into_bytes()),
+fn too_many_request() -> Error {
+    let Some(last_hash) = get_btc().get_latest_hash() else {
+        return Error::status("failed to get latest hash", Status::NotFound)
+    };
+    let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
+    let difficulty = get_difficulty(1_000_000);
+    let body = DifficultyResponse {
+        current,
+        difficulty
+    };
+    Error::response(Response {
+        code: 200,
+        headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+        body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
         trailers: vec![],
-    }
+    })
+}
+
+fn forbidden(message: String) -> Error {
+    let body = serde_json::json!({ "message": message });
+    Error::response(Response {
+        code: 403,
+        headers: vec![("Content-Type".to_string(), "text/json".to_string())],
+        body: Some(body.to_string().into_bytes()),
+        trailers: vec![],
+    })
 }
 
 impl HttpHook for Hook {
     async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
         let Some(path) = self.ctx.get_http_request_header(":path")
             .map_err(|s| Error::status("failed to get path", s))? else {
-            return Ok(())
+            return Err(forbidden("failed to get path from request".to_string()));
         };
 
         let Some(addr) = self.ctx.get_client_address()
             .map_err(|s| Error::status("failed to get client address", s))? else {
-            return Err(Error::response(Response {
-                code: 403,
-                headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-                body: Some("forbidden".to_string().into_bytes()),
-                trailers: vec![],
-            }));
+            return Err(forbidden("failed to get client address from request".to_string()));
         };
 
         log::info!("request from: {}", addr);
 
         return match path.as_str() {
-            "/api/difficulty" => {
-                let last_hash = {
-                    get_btc()
-                        .get_latest_hash()
-                        .ok_or(Error::status("failed to get latest hash", Status::NotFound))?
-                };
-                let current = last_hash.as_str().try_into().expect("failed to parse latest hash");
-                let difficulty = get_difficulty(1_000_000);
-                let body = DifficultyResponse { 
-                    current,
-                    difficulty 
-                };
-                Err(Error::response(Response {
-                    code: 200,
-                    headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-                    body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
-                    trailers: vec![],
-                }))
-            },
+            "/api/difficulty" => Err(too_many_request()),
             _ => {
                 let nonce = self.ctx.get_http_request_header("X-Nonce")
                     .map_err(|s| Error::status("failed to get nonce", s))?
-                    .ok_or(Error::response(miss_nonce()))?;
-                let data = self.ctx.get_http_request_header("X-Data")
-                    .map_err(|s| Error::status("failed to get data", s))?
-                    .ok_or(Error::response(Response {
-                        code: 400,
-                        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-                        body: Some("missing data".to_string().into_bytes()),
-                        trailers: vec![],
-                    }))?;
-                
-                let difficulty = get_difficulty(1_000);
+                    .ok_or_else(too_many_request)?;
                 let nonce = hex::decode(nonce)
                     .map_err(|s| Error::response(
                         Response {
@@ -254,6 +221,13 @@ impl HttpHook for Hook {
                             trailers: vec![],
                         }
                     ))?;
+
+                let data = self.ctx.get_http_request_header("X-Data")
+                    .map_err(|s| Error::status("failed to get data", s))?
+                    .ok_or_else(too_many_request)?;
+                
+                let difficulty = get_difficulty(1_000);
+
 
                 if valid_nonce(data.as_bytes(), difficulty, &nonce) {
                     Ok(())

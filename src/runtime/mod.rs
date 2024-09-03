@@ -122,6 +122,10 @@ pub trait Runtime: Context {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         true
     }
+
+    fn on_configure(&mut self, _configuration: Option<Vec<u8>>) -> bool {
+        true
+    }
 }
 
 pub struct RuntimeBox<R: Runtime> {
@@ -196,6 +200,11 @@ impl <R: Runtime> RootContext for RuntimeBox<R> {
         self.inner.on_vm_start(_vm_configuration_size)
     }
 
+    fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
+        let content = self.get_plugin_configuration();
+        self.inner.on_configure(content)
+    }
+
     fn on_queue_ready(&mut self, queue_id: u32) { wake_tasks(QueueId(queue_id)) }
 
     fn on_tick(&mut self) { runtime::queue::QUEUE.with(|queue| queue.on_tick()) }
@@ -243,6 +252,11 @@ impl Ctx {
     fn reject_request(&self, status: u32, headers: Vec<(&str, &str)>, body: Option<&[u8]>) -> Result<(), Status> {
         hostcalls::set_effective_context(self.id)?;
         hostcalls::send_http_response(status, headers, body)
+    }
+
+    pub fn get_http_request_path(&self) -> Result<String, Status> {
+        self.get_http_request_header(":path")?
+            .ok_or(Status::BadArgument) 
     }
 }
 

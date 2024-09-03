@@ -3,7 +3,6 @@ use std::sync::RwLock;
 
 use log::{debug, warn};
 use proxy_wasm::types::Status;
-use serde::{Deserialize, Serialize};
 
 use crate::runtime::lock::SharedDataLock;
 use crate::runtime::{timeout::sleep, Runtime};

@@ -1,10 +1,10 @@
-use std::{net::IpAddr, str::FromStr};
+use std::{net::IpAddr, ops::Deref, str::FromStr};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{radix_tree::RadixTree, trie::Trie, RouteError};
+use super::{radix_tree::{Matches, RadixTree}, trie::Trie, RouteError};
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VirtualHost<T> {
@@ -27,7 +27,7 @@ pub struct Config<T> {
     pub difficulty: u64,
 }
 
-impl <T> TryFrom<Config<T>> for Trie<RadixTree<T>> {
+impl <T> TryFrom<Config<T>> for Router<T> {
     type Error = RouteError;
     
     fn try_from(value: Config<T>) -> Result<Self, Self::Error> {
@@ -39,7 +39,7 @@ impl <T> TryFrom<Config<T>> for Trie<RadixTree<T>> {
             }
             trie.add(&virtual_host.host, radix)?;
         }
-        Ok(trie)
+        Ok(Router(trie))
     }
 }
 
@@ -188,6 +188,24 @@ impl CIDR {
     }
 }
 
+pub struct Router<T>(Trie<RadixTree<T>>);
+
+pub struct Found<'a, T>(Matches<'a, T>);
+
+impl Deref for Found<'_, Setting> {
+    type Target = Setting;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.data.data
+    }
+}
+
+impl <T> Router<T> {
+    pub fn matches(&self, domain: &str, path: &str) -> Option<Found<T>> {
+        let route = self.0.matches(domain)?;
+        route.matches(path).map(|matches| Found(matches))
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -234,11 +252,10 @@ virtual_hosts:
 
         let config: Config<Setting> = serde_yaml::from_str(config_str).expect("failed to parse config");
         println!("{:?}", config.whitelist);
-        let route: Trie<RadixTree<Setting>> = config.try_into().expect("failed to convert config");
+        let route: Router<Setting> = config.try_into().expect("failed to convert config");
 
-        let route = route.matches("example.com").expect("route not found");
-        let matches = route.matches("/api/posts/114514").expect("route not found");
-        println!("{:?}", matches.data);
+        let found = route.matches("example.com", "/api/posts/114514").expect("route not found");
+        println!("{:?}", found.rate_limit);
     }
 
     #[test]

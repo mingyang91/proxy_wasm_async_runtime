@@ -24,6 +24,7 @@ pub struct Route<T> {
 pub struct Config<T> {
     pub virtual_hosts: Vec<VirtualHost<T>>,
     pub whitelist: Option<Vec<CIDR>>,
+    pub difficulty: u64,
 }
 
 impl <T> TryFrom<Config<T>> for Trie<RadixTree<T>> {
@@ -198,6 +199,7 @@ mod test {
 whitelist:
   - "46.3.240.0/24"
   - "2001:db8::/32"
+difficulty: 1000000
 virtual_hosts:
   - host: "example.com"
     routes:

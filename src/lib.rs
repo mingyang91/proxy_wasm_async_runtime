@@ -3,7 +3,6 @@ pub mod chain;
 
 use chain::bytearray32::ByteArray32;
 use log::info;
-use proxy_wasm::hostcalls;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use runtime::Ctx;

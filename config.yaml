@@ -1,6 +1,7 @@
 whitelist:
   - "46.3.240.0/24"
   - "2001:db8::/32"
+difficulty: 50_000
 virtual_hosts:
   - host: "example.com"
     routes:

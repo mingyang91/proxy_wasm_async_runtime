@@ -44,23 +44,21 @@ where
     task::Task::spawn(Box::pin(future));
 }
 
+pub fn http_call(
+    upstream: &str,
+    headers: Vec<(&str, &str)>,
+    body: Option<&[u8]>,
+    trailers: Vec<(&str, &str)>,
+    timeout: Duration,
+) -> Result<Promise, Status> {
+    let token = hostcalls::dispatch_http_call(upstream, headers, body, trailers, timeout)?;
+    let promise = Promise::pending();
+    PENDINGS.with(|pendings| pendings.insert(token, promise.clone()));
+    Ok(promise)
+}
 
 pub trait Runtime: Context {
     type Hook: HttpHook + 'static;
-    fn http_call(
-        &self,
-        upstream: &str,
-        headers: Vec<(&str, &str)>,
-        body: Option<&[u8]>,
-        trailers: Vec<(&str, &str)>,
-        timeout: Duration,
-    ) -> Result<Promise, Status> {
-        let token = Context::dispatch_http_call(self, upstream, headers, body, trailers, timeout)?;
-        let promise = Promise::pending();
-        PENDINGS.with(|pendings| pendings.insert(token, promise.clone()));
-        Ok(promise)
-    }
-
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         true
     }

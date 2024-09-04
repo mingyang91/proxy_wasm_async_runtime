@@ -1,21 +1,20 @@
 use std::{collections::VecDeque, time::Duration};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use log::{debug, warn};
 use proxy_wasm::types::Status;
 
 use crate::runtime::lock::SharedDataLock;
-use crate::runtime::{timeout::sleep, Runtime};
+use crate::runtime::{http_call, spawn_local};
+use crate::runtime::timeout::sleep;
 
 pub struct BTC {
-    recent_hash_list: SharedDataLock<VecDeque<String>>,
-    state: RwLock<State>,
+    inner: Arc<Inner>
 }
 
-impl Default for BTC {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct Inner {
+    recent_hash_list: SharedDataLock<VecDeque<String>>,
+    state: RwLock<State>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,26 +25,45 @@ enum State {
 }
 
 impl BTC {
-    pub fn new() -> Self {
+    pub fn new() -> Self 
+    {
         let recent_hash_list = SharedDataLock::new(0);
         if let Err(e) = recent_hash_list.initial(VecDeque::new()) {
             log::info!("failed to initialize shared data: {:?}", e);
         }
+
+        let ret = Self {
+            inner: Arc::new(Inner {
+                recent_hash_list,
+                state: RwLock::new(State::Initial),
+            })
+        };
+
+        let ret_clone = ret.clone();
+        spawn_local(async move {
+            ret_clone.start().await;
+        });
+
+        ret
+    }
+
+    fn clone(&self) -> Self {
         Self {
-            recent_hash_list,
-            state: RwLock::new(State::Initial),
+            inner: self.inner.clone()
         }
     }
 
     pub fn check_in_list(&self, hash: &str) -> bool {
-        self.recent_hash_list
+        self.inner
+            .recent_hash_list
             .read()
             .expect("failed to read recent hash list")
             .contains(&hash.to_string())
     }
 
     pub fn get_latest_hash(&self) -> Option<String> {
-        self.recent_hash_list
+        self.inner
+            .recent_hash_list
             .read()
             .expect("failed to read recent hash list")
             .front()
@@ -54,23 +72,23 @@ impl BTC {
 
     // curl -sSL "https://mempool.space/api/blocks/tip/hash"
     // 0000000000000000000624d76f52661d0f35a0da8b93a87cb93cf08fd9140209
-    pub async fn start<'a, R>(&self, runtime: &'a R) 
-    where R: Runtime {
+    pub async fn start(&self)
+    {
         self.turn(State::Running);
         loop {
             { 
-                let state = *self.state.read().expect("failed to read state");
+                let state = *self.inner.state.read().expect("failed to read state");
                 if State::Running != state { 
                     log::info!("exit polling loop");
                     break; 
                 }
             }
             log::debug!("poll for new block hash");
-            if let Err(e) = self.update_latest_hash(runtime).await {
+            if let Err(e) = self.update_latest_hash().await {
                 warn!("failed to update latest hash: {:?}", e);
             }
 
-            let lock = self.recent_hash_list.lock().await
+            let lock = self.inner.recent_hash_list.lock().await
                 .expect("failed to acquire lock");
             sleep(Duration::from_secs(10)).await;
             debug!("data: {:?}", *lock);
@@ -78,13 +96,13 @@ impl BTC {
     }
 
     fn turn(&self, state: State) {
-        *self.state.write().expect("failed to write state") = state;
+        *self.inner.state.write().expect("failed to write state") = state;
     }
 
-    async fn update_latest_hash<'a, R>(&self, runtime: &'a R) -> Result<(), Status>
-    where R: Runtime {
+    async fn update_latest_hash(&self) -> Result<(), Status>
+    {
         debug!("fetching latest block hash from mempool.space");
-        let response = runtime.http_call(
+        let response = http_call(
             "mempool",
             vec![
                 (":method", "GET"),
@@ -113,7 +131,7 @@ impl BTC {
                 Status::InternalFailure
             })?;
 
-        let mut recent_hash_list = self.recent_hash_list.lock().await.expect("failed to write recent hash list");
+        let mut recent_hash_list = self.inner.recent_hash_list.lock().await.expect("failed to write recent hash list");
         debug!("response body: {}", body_str);
         if recent_hash_list.contains(&body_str) {
             return Ok(());

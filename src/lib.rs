@@ -17,14 +17,7 @@ use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use chain::btc::BTC;
-
-static BTC: OnceLock<BTC> = OnceLock::new();
-
-fn get_btc() -> &'static BTC {
-    BTC.get_or_init(BTC::new)
-}
 
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
@@ -36,6 +29,7 @@ proxy_wasm::main! {{
 
 
 struct Inner {
+    btc: BTC,
     router: Router<Setting>,
     counter_bucket: CounterBucket,
     whitelist: Vec<CIDR>,
@@ -52,10 +46,6 @@ impl Context for Plugin {}
 impl Runtime for Plugin {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         info!("PoW filter starting...");
-        let this = self.clone();
-        runtime::spawn_local(async move {
-            get_btc().start(&this).await;
-        });
         true
     }
 
@@ -85,6 +75,7 @@ impl Runtime for Plugin {
         };
 
         self.inner = Some(Arc::new(Inner {
+            btc: BTC::new(),
             router,
             counter_bucket: CounterBucket::new(self.context_id, "rate_limit"),
             whitelist,
@@ -184,14 +175,7 @@ impl From<Error> for Response {
     }
 }
 
-fn too_many_request(difficulty: u64) -> Error {
-    let Some(last_hash) = get_btc().get_latest_hash() else {
-        return Error::status("failed to get latest hash", Status::NotFound)
-    };
-    let current = match last_hash.as_str().try_into() {
-        Ok(ba) => ba,
-        Err(e) => panic!("{}, {}", last_hash, e)
-    };
+fn too_many_request(current: ByteArray32, difficulty: u64) -> Error {
     let target = get_difficulty(difficulty);
     let body = DifficultyResponse {
         current,
@@ -227,10 +211,18 @@ impl Hook {
             .map_err(|s| Error::status("failed to get client address", s))?
             .ok_or_else(|| forbidden("failed to get client address from request".to_string()))
     }
+
+    fn get_current_hash(&self) -> Result<ByteArray32, Error> {
+        let Some(last_hash) = self.plugin.btc.get_latest_hash() else {
+            return Err(Error::status("failed to get latest hash", Status::NotFound))
+        };
+
+        last_hash.as_str().try_into()
+            .map_err(|e| Error::other("failed to parse latest hash, maybe mempool return malformed hash?", e))
+    }
 }
 
 impl HttpHook for Hook {
-
     async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
         let addr = self.get_client_address()?;
         let addr: SocketAddr = addr.parse().map_err(|s| forbidden(format!("invalid client address {}: {}", s, addr)))?;
@@ -247,10 +239,11 @@ impl HttpHook for Hook {
         let key = format!("{}:{}:{}{}", addr.ip(), found.rate_limit.current_bucket(), host, found.pattern());
         let counter = self.plugin.counter_bucket.get(&key).map_err(|s| Error::other("failed to get counter", s))?;
         let difficulty = counter / found.rate_limit.requests_per_unit as u64 * self.plugin.difficulty;
+        let current = self.get_current_hash()?;
         log::debug!("key: {}, counter: {}, difficulty: {}", key, counter, difficulty);
 
         return match path.as_str() {
-            "/api/difficulty" => Err(too_many_request(difficulty)),
+            "/api/difficulty" => Err(too_many_request(current, difficulty)),
             _ => {
                 if difficulty == 0 {
                     self.plugin.counter_bucket.inc(&key, 1);
@@ -260,23 +253,23 @@ impl HttpHook for Hook {
                 let target = get_difficulty(difficulty);
 
                 let nonce = self.get_header("X-Nonce")
-                    .map_err(|_| too_many_request(difficulty))?;
+                    .map_err(|_| too_many_request(current, difficulty))?;
 
                 let nonce = hex::decode(nonce)
                     .map_err(|s| forbidden(format!("invalid nonce: {}", s)))?;
 
                 let last = self.get_header("X-Last")
-                    .map_err(|_| too_many_request(difficulty))?;
+                    .map_err(|_| too_many_request(current, difficulty))?;
 
-                if !get_btc().check_in_list(&last) {
-                    return Err(too_many_request(difficulty))
+                if !self.plugin.btc.check_in_list(&last) {
+                    return Err(too_many_request(current, difficulty))
                 }
 
                 let last: ByteArray32 = last.as_str().try_into()
                     .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
 
                 let data = self.get_header("X-Data")
-                    .map_err(|_| too_many_request(difficulty))?;
+                    .map_err(|_| too_many_request(current, difficulty))?;
 
                 let mut final_data = last.as_bytes().to_vec();
                 final_data.extend(data.as_bytes());

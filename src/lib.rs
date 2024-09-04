@@ -21,7 +21,6 @@ use chain::btc::BTC;
 
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
-
     proxy_wasm::set_root_context(move |context_id| -> Box<dyn RootContext> { 
         Box::new(RuntimeBox::new(Plugin { context_id, inner: None }))
     });
@@ -62,6 +61,8 @@ impl Runtime for Plugin {
                 return false;
             }
         };
+
+        proxy_wasm::set_log_level(config.log_level.map(|l| l.into()).unwrap_or(LogLevel::Trace));
 
         let whitelist = config.whitelist.take().unwrap_or_default();
         let difficulty = config.difficulty;

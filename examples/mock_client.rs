@@ -74,7 +74,7 @@ async fn main() {
         tasks.push(tokio::spawn(async move {
             loop {
                 let start = std::time::Instant::now();
-                single_request().await;
+                let _ = single_request().await;
                 println!("time: {}sec", start.elapsed().as_secs());
             }
         }));

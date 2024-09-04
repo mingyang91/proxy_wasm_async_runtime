@@ -13,6 +13,8 @@ use proxy_wasm::types::Status;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::codec::Codec;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueueId(pub u32);
 
@@ -65,13 +67,13 @@ thread_local! {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Store<T> {
+struct Store<T: Codec> {
     state: StoreState,
     data: T
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[cfg_attr(feature = "serde_json", serde(tag = "type"))]
 enum StoreState {
     Unlocked,
     Locked {
@@ -81,7 +83,7 @@ enum StoreState {
     },
 }
 
-impl <T> Store<T> {
+impl <T: Codec> Store<T> {
     fn new(data: T) -> Self {
         Store {
             state: StoreState::Unlocked,
@@ -124,8 +126,13 @@ pub enum Error {
     #[error("shared data is locked")]
     Locked,
 
-    #[error("failed to decode shared data: {0}")]
-    Decode(#[from] serde_json::Error),
+    #[cfg(feature = "bincode")]
+    #[error("failed to encode/decode shared data: {0}")]
+    Codec(#[from] bincode::Error),
+
+    #[cfg(feature = "serde_json")]
+    #[error("failed to encode/decode shared data: {0}")]
+    Codec(#[from] serde_json::Error),
 }
 
 impl Error {
@@ -159,7 +166,7 @@ pub struct SharedDataLock<S> {
 /// is in scope.
 pub struct SharedDataLockGuard<'a, S> 
 where 
-    S: Serialize + DeserializeOwned 
+    S: Serialize + DeserializeOwned
 {
     lock: &'a SharedDataLock<S>,
     store: Store<S>,
@@ -167,7 +174,7 @@ where
 
 impl<'a, S> SharedDataLockGuard<'a, S> 
 where 
-    S: Serialize + DeserializeOwned 
+    S: Serialize + DeserializeOwned
 {
     fn new(lock: &'a SharedDataLock<S>, store: Store<S>) -> Self {
         SharedDataLockGuard {
@@ -189,7 +196,7 @@ where
 
 impl <S> Deref for SharedDataLockGuard<'_, S> 
 where 
-    S: Serialize + DeserializeOwned 
+    S: Serialize + DeserializeOwned
 {
     type Target = S;
 
@@ -200,7 +207,7 @@ where
 
 impl <S> DerefMut for SharedDataLockGuard<'_, S> 
 where 
-    S: Serialize + DeserializeOwned 
+    S: Serialize + DeserializeOwned
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.store.data
@@ -223,10 +230,10 @@ impl<S: 'static> SharedDataLock<S> {
     
     pub fn initial(&self, data: S) -> Result<(), Error>
     where
-        S: Serialize + DeserializeOwned
+        S: Serialize + DeserializeOwned 
     {
         let store = Store::new(data);
-        let raw = serde_json::to_vec(&store)
+        let raw = &store.encode()
             .expect("failed to serialize shared data");
 
         match hostcalls::set_shared_data(self.key, Some(&raw), None) {
@@ -242,7 +249,7 @@ impl<S: 'static> SharedDataLock<S> {
     }
 
     pub fn read(&self) -> Result<S, Error> 
-    where S: Serialize + DeserializeOwned {
+    where S: Serialize + DeserializeOwned  {
         match get_shared_data::<Store<S>>(self.key) {
             Ok((Some(store), _)) => Ok(store.data),
             Ok((None, _)) => Err(Error::Uninitialized),
@@ -289,14 +296,14 @@ where
     }
 }
 
-pub fn get_shared_data<T: DeserializeOwned>(key: &str) -> Result<(Option<T>, Option<u32>), Error> {
+pub fn get_shared_data<T: Serialize + DeserializeOwned>(key: &str) -> Result<(Option<T>, Option<u32>), Error> {
     let (raw, cas) = hostcalls::get_shared_data(key)
         .map_err(|status| Error::status("failed to get shared data".to_string(), status))?;
 
     match raw {
         None => Ok((None, cas)),
         Some(vec) => {
-            let data = serde_json::from_slice(&vec)?;
+            let data = T::decode(&vec)?;
             Ok((Some(data), cas))
         }
     }
@@ -323,14 +330,14 @@ where
         });
     };
 
-    let mut store: Store<T> = serde_json::from_slice(&vec)?;
+    let mut store: Store<T> = Store::<T>::decode(&vec)?;
 
     if store.is_locked() {
         return Err(Error::Locked);
     }
 
     store.turn_lock(holder, cas);
-    let raw = serde_json::to_vec(&store)?;
+    let raw = &store.encode()?;
     let Err(status) = hostcalls::set_shared_data(key, Some(&raw), Some(cas)) else {
         return Ok(store)
     };
@@ -351,7 +358,7 @@ where
     };
 
     store.turn_unlock();
-    let raw = serde_json::to_vec(&store)?;
+    let raw = &store.encode()?;
 
     loop {
         let (_, cas) = hostcalls::get_shared_data(key)

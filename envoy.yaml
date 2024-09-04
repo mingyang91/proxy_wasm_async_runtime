@@ -47,7 +47,7 @@ static_resources:
                         configuration:
                           "@type": "type.googleapis.com/google.protobuf.StringValue"
                           value: |
-                            log_level: info
+                            log_level: trace
                             whitelist:
                               - "46.3.240.0/24"
                               - "2001:db8::/32"

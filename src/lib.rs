@@ -125,6 +125,7 @@ fn get_difficulty(level: u64) -> ByteArray32 {
 struct DifficultyResponse {
     current: ByteArray32,
     difficulty: ByteArray32,
+    message: String,
 }
 
 #[derive(Debug)]
@@ -153,9 +154,13 @@ impl Error {
 impl From<Error> for Response {
     fn from(val: Error) -> Self {
         match val {
-            Error::Response(response) => response,
+            Error::Response(response) => {
+                log::debug!("reject request with response, {:?}", response.code);
+                response
+            },
             Error::Status { reason, status } => {
-                let msg = format!("{}: {:?}", reason, status);
+                let msg = format!("{:?}: {}", status, reason);
+                log::warn!("failed hostcall with error, {}", msg);
                 Response {
                     code: 500,
                     headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
@@ -164,7 +169,8 @@ impl From<Error> for Response {
                 }
             },
             Error::Other { reason, error } => {
-                let msg = format!("{}: {}", reason, error);
+                let msg = format!("{}: {}", error, reason);
+                log::warn!("failed unknow error, {}", msg);
                 Response {
                     code: 500,
                     headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
@@ -176,11 +182,12 @@ impl From<Error> for Response {
     }
 }
 
-fn too_many_request(current: ByteArray32, difficulty: u64) -> Error {
+fn too_many_request(current: ByteArray32, difficulty: u64, description: String) -> Error {
     let target = get_difficulty(difficulty);
     let body = DifficultyResponse {
         current,
-        difficulty: target
+        difficulty: target,
+        message: description
     };
     Error::response(Response {
         code: 429,
@@ -219,7 +226,18 @@ impl Hook {
         };
 
         last_hash.as_str().try_into()
-            .map_err(|e| Error::other("failed to parse latest hash, maybe mempool return malformed hash?", e))
+            .map_err(|e| Error::other(format!("failed to parse latest hash, maybe mempool return malformed hash?, {last_hash}"), e))
+    }
+
+    fn get_path(&self) -> Result<String, Error> {
+        self.ctx.get_http_request_path()
+            .map_err(|s| Error::status("failed to get path", s))
+    }
+
+    fn get_timestamp(&self) -> Result<u64, Error> {
+        self.get_header("X-PoW-Timestamp")?
+            .parse()
+            .map_err(|e| forbidden(format!("failed to parse timestamp: {}", e)))
     }
 }
 
@@ -231,9 +249,12 @@ impl HttpHook for Hook {
             return Ok(());
         }
         let host = self.get_header(":authority")?;
-        let path = self.get_header(":path")?;
+        let path = self.get_path()?;
+
+        log::debug!("{} -> {}{}", addr, host, path);
 
         let Some(found) = self.plugin.router.matches(&host, &path) else {
+            log::debug!("no matched route found, skip rate limit");
             return Ok(())
         };
 
@@ -243,49 +264,49 @@ impl HttpHook for Hook {
         let current = self.get_current_hash()?;
         log::debug!("key: {}, counter: {}, difficulty: {}", key, counter, difficulty);
 
-        return match path.as_str() {
-            "/api/difficulty" => Err(too_many_request(current, difficulty)),
-            _ => {
-                if difficulty == 0 {
-                    self.plugin.counter_bucket.inc(&key, 1);
-                    return Ok(());
-                }
+        if difficulty == 0 {
+            self.plugin.counter_bucket.inc(&key, 1);
+            return Ok(());
+        }
 
-                let target = get_difficulty(difficulty);
+        let target = get_difficulty(difficulty);
 
-                let nonce = self.get_header("X-Nonce")
-                    .map_err(|_| too_many_request(current, difficulty))?;
+        let timestamp = self.get_timestamp()
+            .map_err(|_| too_many_request(current, difficulty, format!("miss X-PoW-Timestamp in header, or malformed")))?;
+        if timestamp + 60 < std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs() {
+            return Err(too_many_request(current, difficulty, "timestamp expired".to_string()))
+        }
 
-                let nonce = hex::decode(nonce)
-                    .map_err(|s| forbidden(format!("invalid nonce: {}", s)))?;
+        let nonce = self.get_header("X-PoW-Nonce")
+            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Nonce in header".to_string()))?;
 
-                let last = self.get_header("X-Last")
-                    .map_err(|_| too_many_request(current, difficulty))?;
+        let nonce = hex::decode(nonce)
+            .map_err(|s| too_many_request(current, difficulty, format!("invalid nonce: {}", s)))?;
 
-                if !self.plugin.btc.check_in_list(&last) {
-                    return Err(too_many_request(current, difficulty))
-                }
+        let last = self.get_header("X-PoW-Base")
+            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Base in header".to_string()))?;
 
-                let last: ByteArray32 = last.as_str().try_into()
-                    .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
+        if !self.plugin.btc.check_in_list(&last) {
+            return Err(too_many_request(current, difficulty, "X-PoW-Base are expired, please use current".to_string()))
+        }
 
-                let data = self.get_header("X-Data")
-                    .map_err(|_| too_many_request(current, difficulty))?;
+        let last: ByteArray32 = last.as_str().try_into()
+            .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
 
-                let mut final_data = last.as_bytes().to_vec();
-                final_data.extend(data.as_bytes());
-                if valid_nonce(&final_data, target, &nonce) {
-                    self.plugin.counter_bucket.inc(&key, 1);
-                    Ok(())
-                } else {
-                    Err(Error::response(Response {
-                        code: 400,
-                        headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-                        body: Some("invalid nonce".to_string().into_bytes()),
-                        trailers: vec![],
-                    }))
-                }
-            }
+        let mut data = last.as_bytes().to_vec();
+        data.extend(timestamp.to_be_bytes());
+        data.extend(path.as_bytes());
+
+        if valid_nonce(&data, target, &nonce) {
+            self.plugin.counter_bucket.inc(&key, 1);
+            Ok(())
+        } else {
+            Err(Error::response(Response {
+                code: 400,
+                headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                body: Some("invalid nonce".to_string().into_bytes()),
+                trailers: vec![],
+            }))
         }
     }
 }

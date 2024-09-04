@@ -131,6 +131,11 @@ impl BTC {
                 Status::InternalFailure
             })?;
 
+        if body_str.len() != 64 {
+            warn!("invalid block hash: {}", body_str);
+            return Ok(())
+        }
+
         let mut recent_hash_list = self.inner.recent_hash_list.lock().await.expect("failed to write recent hash list");
         debug!("response body: {}", body_str);
         if recent_hash_list.contains(&body_str) {

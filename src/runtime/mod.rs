@@ -10,6 +10,7 @@ pub mod kv_store;
 pub mod counter_bucket;
 pub mod response;
 pub mod promise;
+pub mod codec;
 
 use std::{
     future::Future, rc::Rc, time::Duration
@@ -167,6 +168,12 @@ impl Ctx {
     pub fn get_http_request_header(&self, key: &str) -> Result<Option<String>, Status> {
         hostcalls::set_effective_context(self.id)?;
         Ok(HttpContext::get_http_request_header(self, key))
+            // .or_else(|| HttpContext::get_http_request_trailer(self, key)))
+    }
+
+    pub fn get_http_request_trailers(&self) -> Result<Vec<(String, String)>, Status> {
+        hostcalls::set_effective_context(self.id)?;
+        Ok(HttpContext::get_http_request_trailers(self))
     }
 
     fn continue_request(&self) -> Result<(), Status> {
@@ -206,6 +213,11 @@ impl <H: HttpHook> HookHolder<H> {
 impl <H: HttpHook> Context for HookHolder<H> {}
 
 impl <H: HttpHook> HttpContext for HookHolder<H> {
+    fn on_http_request_trailers(&mut self, _num_trailers: usize) -> Action {
+        let all = self.get_http_request_trailers();
+        log::info!("all trailers: {:?}", all);
+        Action::Continue
+    }
     fn on_http_request_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         log::debug!("on_http_request_headers");
         let hook = self.inner.clone();

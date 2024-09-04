@@ -1,7 +1,9 @@
 use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use proxy_wasm::{hostcalls, types::Status};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+
+use super::codec::Codec;
 
 pub struct LowLevelKVStore {
     context_id: u32,
@@ -62,44 +64,6 @@ pub struct KVStore<V> {
     low_level: LowLevelKVStore,
     prefix: String,
     _phantom: PhantomData<V>,
-}
-
-pub trait Codec {
-    type Error;
-    fn encode(&self) -> Result<Vec<u8>, Self::Error>;
-    fn decode(value: &[u8]) -> Result<Self, Self::Error> where Self: Sized;
-}
-
-#[cfg(feature = "serde_json")]
-impl <V> Codec for V
-where
-    V: Serialize + DeserializeOwned 
-{
-    type Error = serde_json::Error;
-    
-    fn encode(&self) -> Result<Vec<u8>, Self::Error> {
-        serde_json::to_vec(self)
-    }
-    
-    fn decode(value: &[u8]) -> Result<Self, Self::Error> where Self: Sized {
-        serde_json::from_slice(value)
-    }
-}
-
-#[cfg(feature = "bincode")]
-impl <V> Codec for V
-where
-    V: Serialize + DeserializeOwned 
-{
-    type Error = bincode::Error;
-    
-    fn encode(&self) -> Result<Vec<u8>, Self::Error> {
-        bincode::serialize(self)
-    }
-    
-    fn decode(value: &[u8]) -> Result<Self, Self::Error> where Self: Sized {
-        bincode::deserialize(value)
-    }
 }
 
 #[derive(Debug, thiserror::Error)]

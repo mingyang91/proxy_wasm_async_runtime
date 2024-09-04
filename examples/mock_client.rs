@@ -74,8 +74,11 @@ async fn main() {
         tasks.push(tokio::spawn(async move {
             loop {
                 let start = std::time::Instant::now();
-                let _ = single_request().await;
-                println!("time: {}sec", start.elapsed().as_secs());
+                if let Err(e) = single_request().await {
+                    println!("Error: {}", e);
+                } else {
+                    println!("time: {}sec", start.elapsed().as_secs());
+                }
             }
         }));
     }
@@ -87,29 +90,43 @@ async fn main() {
 struct PoW {
     current: ByteArray32,
     difficulty: ByteArray32,
+    #[allow(dead_code)]
+    message: String,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct Error(String);
 
 
 async fn single_request() -> Result<(), Box<dyn std::error::Error>> {
     let address = "bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297";
+    let path = format!("/ip?address={}", address);
+    let url = format!("http://localhost:10000{}", path);
 
     let response = Client::new()
-        .get("http://localhost:10000/ip")
+        .get(&url)
         .header("Host", "httpbin.org")
         .send()
         .await?;
 
-    if response.status() != 429 {
-        let body = response.text().await?;
-        println!("Success: {}", body);
-        return Ok(())
-    }
-    let mut pow: PoW = response.json().await?;
+    let mut pow: PoW = match response.status().as_u16() {
+        429 => response.json().await?,
+        403 => { return Err(Box::new(Error(response.text().await?))) },
+        _ => { 
+            let body = response.text().await?;
+            println!("Success: {}", body);
+            return Ok(())
+        },
+    };
+    
     loop {
         println!("difficulty: {:?}", pow.difficulty);
 
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs();
         let mut data = pow.current.as_bytes().to_vec();
-        data.extend(address.as_bytes());
+        data.extend(timestamp.to_be_bytes());
+        data.extend(path.as_bytes());
 
 
         let nonce = tokio::task::spawn_blocking(move || {
@@ -117,21 +134,28 @@ async fn single_request() -> Result<(), Box<dyn std::error::Error>> {
         }).await.expect("join failed");
 
         let response = Client::new()
-            .get("http://localhost:10000/ip")
+            .get(&url)
             .header("Host", "httpbin.org")
-            .header("X-Nonce", print_hex(&nonce))
-            .header("X-Data", address)
-            .header("X-Last", print_hex(pow.current.as_bytes()))
+            .header("X-PoW-Timestamp", timestamp.to_string())
+            .header("X-PoW-Nonce", print_hex(&nonce))
+            .header("X-PoW-Base", print_hex(pow.current.as_bytes()))
             .send()
             .await?;
 
-        if response.status() != 429 {
+        if response.status() != 429 || response.status() != 403 {
             let body = response.text().await?;
             println!("Success: {}", body);
             return Ok(())
         }
-
-        pow = response.json().await?;
+        pow = match response.status().as_u16() {
+            429 => response.json().await?,
+            403 => { return Err(Box::new(Error(response.text().await?))) },
+            _ => { 
+                let body = response.text().await?;
+                println!("Success: {}", body);
+                return Ok(())
+            },
+        };
     }
 }
 

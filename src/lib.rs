@@ -12,7 +12,7 @@ use runtime::route::config::Setting;
 use runtime::route::config::CIDR;
 use runtime::Ctx;
 use runtime::HttpHook;
-use runtime::Response;
+use runtime::response::Response;
 use runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
 use std::net::SocketAddr;

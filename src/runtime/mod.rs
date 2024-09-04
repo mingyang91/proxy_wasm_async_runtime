@@ -8,16 +8,19 @@ pub mod lock;
 pub mod route;
 pub mod kv_store;
 pub mod counter_bucket;
+pub mod response;
+pub mod promise;
 
-use core::panic;
 use std::{
-    cell::RefCell, collections::HashMap, future::Future, pin::Pin, rc::Rc, task::{Poll, Waker}, time::Duration
+    future::Future, rc::Rc, time::Duration
 };
 
 use lock::{wake_tasks, QueueId};
+use promise::{Promise, PENDINGS};
 use proxy_wasm::{
     hostcalls, traits::{Context, HttpContext, RootContext}, types::{Action, Status}
 };
+use response::Response;
 
 use crate::runtime;
 
@@ -41,67 +44,6 @@ where
     task::Task::spawn(Box::pin(future));
 }
 
-#[derive(Debug)]
-pub struct Response {
-    pub code: u32,
-    pub headers: Vec<(String, String)>,
-    pub body: Option<Vec<u8>>,
-    pub trailers: Vec<(String, String)>,
-}
-
-enum InnerPromise {
-    Pending(Option<Waker>),
-    Resolved(Response),
-    Rejected,
-    Gone(()),
-}
-
-#[derive(Clone)]
-pub struct Promise {
-    inner: Rc<RefCell<InnerPromise>>,
-}
-
-impl Promise {
-    fn pending() -> Self {
-        Self {
-            inner: Rc::new(RefCell::new(InnerPromise::Pending(None))),
-        }
-    }
-
-    fn resolve(&self, response: Response) {
-        let old = self.inner.replace(InnerPromise::Resolved(response));
-        if let InnerPromise::Pending(Some(waker)) = old {
-            waker.wake();
-        }
-    }
-
-    fn reject(&self) {
-        self.inner.replace(InnerPromise::Rejected);
-    }
-}
-
-impl Future for Promise {
-    type Output = Result<Response, ()>;
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let mut inner = self.inner.borrow_mut();
-        if let InnerPromise::Pending(ref mut waker) = *inner {
-            if waker.is_none() {
-                *waker = Some(_cx.waker().clone());
-            }
-            Poll::Pending
-        } else if let InnerPromise::Rejected = *inner {
-            return Poll::Ready(Err(()));
-        } else if let InnerPromise::Gone(()) = *inner {
-            panic!("polling a resolved promise");
-        } else {
-            match std::mem::replace(&mut *inner, InnerPromise::Gone(())) {
-                InnerPromise::Resolved(response) => return Poll::Ready(Ok(response)),
-                _ => unreachable!(),
-            }
-        }
-    }
-}
 
 pub trait Runtime: Context {
     type Hook: HttpHook + 'static;
@@ -168,32 +110,6 @@ impl <R: Runtime> Context for RuntimeBox<R> {
             promise.resolve(response);
         }
     }
-}
-
-struct Pendings {
-    inner: RefCell<HashMap<u32, Promise>>,
-}
-
-impl Pendings {
-    fn new() -> Self {
-        Self {
-            inner: RefCell::new(HashMap::new()),
-        }
-    }
-
-    fn insert(&self, token: u32, promise: Promise) {
-        if self.inner.borrow_mut().insert(token, promise).is_some() {
-            panic!("overwriting pending promise for token: {}", token);
-        }
-    }
-
-    fn remove(&self, token: &u32) -> Option<Promise> {
-        self.inner.borrow_mut().remove(token)
-    }
-}
-
-thread_local! {
-    pub(crate) static PENDINGS: Pendings = Pendings::new();
 }
 
 impl <R: Runtime> RootContext for RuntimeBox<R> {

@@ -353,19 +353,20 @@ where
     store.turn_unlock();
     let raw = serde_json::to_vec(&store)?;
 
-    let (_, cas) = hostcalls::get_shared_data(key)
-        .map_err(|status| Error::status("failed to get cas when unlock data".to_string(), status))?;
-    let Err(status) = hostcalls::set_shared_data(key, Some(&raw), cas) else {
-        hostcalls::enqueue_shared_queue(queue_id.0, None) // TODO: change me
-            .map_err(|status| Error::status("failed to enqueue shared queue".to_string(), status))?;
-        return Ok(())
-    };
+    loop {
+        let (_, cas) = hostcalls::get_shared_data(key)
+            .map_err(|status| Error::status("failed to get cas when unlock data".to_string(), status))?;
+        let Err(status) = hostcalls::set_shared_data(key, Some(&raw), cas) else {
+            hostcalls::enqueue_shared_queue(queue_id.0, None) // TODO: change me
+                .map_err(|status| Error::status("failed to enqueue shared queue".to_string(), status))?;
+            return Ok(())
+        };
 
-    let err = match status {
-        proxy_wasm::types::Status::CasMismatch => Error::CasMismatch,
-        _ => Error::status("failed to set shared data".to_string(), status),
-    };
-    Err(err)
+        match status {
+            proxy_wasm::types::Status::CasMismatch => continue,
+            _ => return Err(Error::status("failed to set shared data".to_string(), status)),
+        };
+    }
 }
 
 fn current_timestamp() -> u64 {

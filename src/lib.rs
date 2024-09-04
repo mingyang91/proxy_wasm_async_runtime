@@ -51,7 +51,7 @@ struct Plugin {
 impl Context for Plugin {}
 impl Runtime for Plugin {
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        info!("Hello from WASM");
+        info!("PoW filter starting...");
         let this = self.clone();
         runtime::spawn_local(async move {
             get_btc().start(&this).await;
@@ -60,6 +60,7 @@ impl Runtime for Plugin {
     }
 
     fn on_configure(&mut self, configuration: Option<Vec<u8>>) -> bool {
+        info!("PoW filter configuring...");
         let Some(config_bytes) = configuration else {
             return false
         };
@@ -89,6 +90,7 @@ impl Runtime for Plugin {
             whitelist,
             difficulty,
         }));
+        info!("PoW filter configured");
         true
     }
     

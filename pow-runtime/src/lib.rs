@@ -1,4 +1,4 @@
-mod task {
+pub mod task {
     mod singlethread;
     pub(crate) use singlethread::*;
 }
@@ -22,9 +22,6 @@ use proxy_wasm::{
     hostcalls, traits::{Context, HttpContext, RootContext}, types::{Action, Status}
 };
 use response::Response;
-
-use crate::runtime;
-
 
 /// Runs a Rust `Future` on the current thread.
 ///
@@ -124,7 +121,7 @@ impl <R: Runtime> RootContext for RuntimeBox<R> {
 
     fn on_queue_ready(&mut self, queue_id: u32) { wake_tasks(QueueId(queue_id)) }
 
-    fn on_tick(&mut self) { runtime::queue::QUEUE.with(|queue| queue.on_tick()) }
+    fn on_tick(&mut self) { queue::QUEUE.with(|queue| queue.on_tick()) }
 
     fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
         let hook = self.inner.create_http_context(_context_id)?;

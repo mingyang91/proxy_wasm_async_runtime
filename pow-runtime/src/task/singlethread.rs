@@ -32,11 +32,11 @@ impl Task {
 
         *this.inner.borrow_mut() = Some(Inner { future, waker });
 
-        crate::runtime::queue::QUEUE.with(|queue| queue.schedule_task(this));
+        crate::queue::QUEUE.with(|queue| queue.schedule_task(this));
     }
 
     fn force_wake(this: Rc<Self>) {
-        crate::runtime::queue::QUEUE.with(|queue| {
+        crate::queue::QUEUE.with(|queue| {
             queue.push_task(this);
         });
     }

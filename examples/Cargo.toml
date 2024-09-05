@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["mock-client"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+rust-version = "1.80"
+authors = ["mingyang91 <my@famer.me>"]
+license = "MIT"
+
+[workspace.dependencies]
+pow-types = { path = "../pow-types", version = "0.1.0" }

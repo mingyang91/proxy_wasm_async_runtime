@@ -1,19 +1,18 @@
-pub mod runtime;
 pub mod chain;
 
-use chain::bytearray32::ByteArray32;
+use pow_types::bytearray32::ByteArray32;
 use log::info;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
-use runtime::counter_bucket::CounterBucket;
-use runtime::route::config::Config;
-use runtime::route::config::Router;
-use runtime::route::config::Setting;
-use runtime::route::config::CIDR;
-use runtime::Ctx;
-use runtime::HttpHook;
-use runtime::response::Response;
-use runtime::{Runtime, RuntimeBox};
+use pow_runtime::counter_bucket::CounterBucket;
+use pow_runtime::route::config::Config;
+use pow_runtime::route::config::Router;
+use pow_runtime::route::config::Setting;
+use pow_runtime::route::config::CIDR;
+use pow_runtime::Ctx;
+use pow_runtime::HttpHook;
+use pow_runtime::response::Response;
+use pow_runtime::{Runtime, RuntimeBox};
 use sha2::Digest;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -272,7 +271,7 @@ impl HttpHook for Hook {
         let target = get_difficulty(difficulty);
 
         let timestamp = self.get_timestamp()
-            .map_err(|_| too_many_request(current, difficulty, format!("miss X-PoW-Timestamp in header, or malformed")))?;
+            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Timestamp in header, or malformed".to_string()))?;
         if timestamp + 60 < std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs() {
             return Err(too_many_request(current, difficulty, "timestamp expired".to_string()))
         }
@@ -323,7 +322,8 @@ fn valid_nonce(data: &[u8], difficulty: ByteArray32, nonce: &[u8]) -> bool {
 
 #[cfg(test)]
 mod test {
-    use crate::{chain::bytearray32::ByteArray32, valid_nonce};
+    use pow_types::bytearray32::ByteArray32;
+    use crate::valid_nonce;
 
     #[test]
     fn mine() {

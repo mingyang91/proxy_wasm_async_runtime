@@ -78,7 +78,7 @@ fn radix_add_all<T>(radix: &mut RadixTree<T>, path: &str, config: T, children: O
         let path = normalize_path(&format!("{}/{}", path, child.path));
         radix_add_all(radix, &path, child.config, child.children)?;
     }
-    return Ok(())
+    Ok(())
 }
 
 

@@ -236,7 +236,7 @@ impl<S: 'static> SharedDataLock<S> {
         let raw = &store.encode()
             .expect("failed to serialize shared data");
 
-        match hostcalls::set_shared_data(self.key, Some(&raw), None) {
+        match hostcalls::set_shared_data(self.key, Some(raw), None) {
             Ok(_) => Ok(()),
             Err(Status::CasMismatch) => Err(Error::CasMismatch),
             Err(status) => Err(Error::status("failed to set shared data".to_string(), status)),
@@ -338,7 +338,7 @@ where
 
     store.turn_lock(holder, cas);
     let raw = &store.encode()?;
-    let Err(status) = hostcalls::set_shared_data(key, Some(&raw), Some(cas)) else {
+    let Err(status) = hostcalls::set_shared_data(key, Some(raw), Some(cas)) else {
         return Ok(store)
     };
 
@@ -363,7 +363,7 @@ where
     loop {
         let (_, cas) = hostcalls::get_shared_data(key)
             .map_err(|status| Error::status("failed to get cas when unlock data".to_string(), status))?;
-        let Err(status) = hostcalls::set_shared_data(key, Some(&raw), cas) else {
+        let Err(status) = hostcalls::set_shared_data(key, Some(raw), cas) else {
             hostcalls::enqueue_shared_queue(queue_id.0, None) // TODO: change me
                 .map_err(|status| Error::status("failed to enqueue shared queue".to_string(), status))?;
             return Ok(())
@@ -391,6 +391,7 @@ mod test {
         name: String
     }
     
+    #[cfg(feature = "serde_json")]
     #[test]
     fn test_shared_data_lock() {
         let json = "{\"state\":{\"type\":\"Unlocked\"},\"data\":{\"name\":\"Sun\"}}";

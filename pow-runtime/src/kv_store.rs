@@ -233,11 +233,11 @@ where
                 return Expirations::new();
             };
             expired = expirations.pop_expired();
-            return expirations
+            expirations
         })?;
 
         for key in expired {
-            let _ = self.store.remove(&key)?;
+            self.store.remove(&key)?;
         }
 
         Ok(())

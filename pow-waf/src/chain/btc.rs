@@ -4,9 +4,9 @@ use std::sync::{Arc, RwLock};
 use log::{debug, warn};
 use proxy_wasm::types::Status;
 
-use crate::runtime::lock::SharedDataLock;
-use crate::runtime::{http_call, spawn_local};
-use crate::runtime::timeout::sleep;
+use pow_runtime::lock::SharedDataLock;
+use pow_runtime::{http_call, spawn_local};
+use pow_runtime::timeout::sleep;
 
 pub struct BTC {
     inner: Arc<Inner>
@@ -22,6 +22,12 @@ enum State {
     Initial,
     Running,
     Stopped,
+}
+
+impl Default for BTC {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BTC {

@@ -6,7 +6,7 @@ struct QueueState {
     // The queue of Tasks which are to be run in order. In practice this is all the
     // synchronous work of futures, and each `Task` represents calling `poll` on
     // a future "at the right time".
-    tasks: RefCell<VecDeque<Rc<crate::runtime::task::Task>>>,
+    tasks: RefCell<VecDeque<Rc<crate::task::Task>>>,
 }
 
 impl QueueState {
@@ -34,11 +34,11 @@ pub(crate) struct Queue {
 
 impl Queue {
     // Schedule a task to run on the next tick
-    pub(crate) fn schedule_task(&self, task: Rc<crate::runtime::task::Task>) {
+    pub(crate) fn schedule_task(&self, task: Rc<crate::task::Task>) {
         self.state.tasks.borrow_mut().push_back(task);
     }
     // Append a task to the currently running queue, or schedule it
-    pub(crate) fn push_task(&self, task: Rc<crate::runtime::task::Task>) {
+    pub(crate) fn push_task(&self, task: Rc<crate::task::Task>) {
         // It would make sense to run this task on the same tick.  For now, we
         // make the simplifying choice of always scheduling tasks for a future tick.
         self.schedule_task(task)

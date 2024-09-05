@@ -43,7 +43,7 @@ static_resources:
                     type_url: type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
                     value:
                       config:
-                        name: "http_auth_random"
+                        name: "PoW"
                         configuration:
                           "@type": "type.googleapis.com/google.protobuf.StringValue"
                           value: |
@@ -85,12 +85,33 @@ static_resources:
                         vm_config:
                           runtime: "envoy.wasm.runtime.v8"
                           code:
-                            local:
-                              filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
+                            remote:
+                              http_uri:
+                                uri: "http://download/pow_waf.wasm"
+                                cluster: download
+                                timeout:
+                                  seconds: 10
+                                  nanos: 0
+                              sha256: "2651c6de51e2c4141bf5ec9aef208a298b7b30c8f0f0a3c930b9e4356485e192"
+                            # local:
+                            #   filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
                 - name: envoy.filters.http.router
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
   clusters:
+  - name: download
+    connect_timeout: 5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: download
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: download
+                    port_value: 80
   - name: httpbin
     connect_timeout: 5s
     type: STRICT_DNS

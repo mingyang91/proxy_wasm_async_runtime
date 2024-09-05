@@ -13,6 +13,13 @@
 # limitations under the License.
 
 services:
+  download:
+    image: nginx:latest
+    hostname: download
+    volumes:
+      - ./target/wasm32-wasi/release:/usr/share/nginx/html
+    networks:
+      - envoymesh
   envoy:
     image: envoyproxy/envoy:v1.31-latest
     hostname: envoy

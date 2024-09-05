@@ -4,7 +4,7 @@ members = [
 	"pow-waf",
 	"pow-runtime",
 	"pow-types"
-, "examples/mock-client"]
+]
 
 [workspace.package]
 authors = ["mingyang91 <my@famer.me>"]

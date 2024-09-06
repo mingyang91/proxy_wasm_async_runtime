@@ -1,0 +1,40 @@
+<html></html>
+
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="wrapper">
+        <h1>Main Thread/Wasm Web Worker Interaction</h1>
+
+				<p>
+					<label for="path">Path</label>
+					<input type="text" id="path" value="/ip">
+				</p>
+				<p>
+					<label for="current">Current</label>
+        	<input type="text" id="current" value="000000000000000000015beb8839f715806b45a0895367e702b14e782afccfdd">
+				</p>
+				<p>
+					<label for="difficulty">Difficulty</label>
+        	<input type="text" id="difficulty" value="0000a7c5ac471b47ffffffffffffffffffffffffffffffffffffffffffffffff">
+				</p>
+				<p>
+					<label for="nonce">Nonce</label>
+					<span id="nonce">click mine to calculate</span>
+				</p>
+				<p>
+					<label for="error">Error</label>
+					<span id="error"></span>
+				</p>
+				<button id="mine">Mine</button>
+    </div>
+
+    <!-- Note that there is no `type="module"` in the script tag -->
+    <script src="./index.js"></script>
+
+</body>
+
+</html>

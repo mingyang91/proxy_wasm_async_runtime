@@ -280,7 +280,7 @@ impl HttpHook for Hook {
             .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Nonce in header".to_string()))?;
 
         let nonce = hex::decode(nonce)
-            .map_err(|s| too_many_request(current, difficulty, format!("invalid nonce: {}", s)))?;
+            .map_err(|s| too_many_request(current, difficulty, format!("X-PoW-Nonce must be a hex string: {}", s)))?;
 
         let last = self.get_header("X-PoW-Base")
             .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Base in header".to_string()))?;
@@ -300,12 +300,7 @@ impl HttpHook for Hook {
             self.plugin.counter_bucket.inc(&key, 1);
             Ok(())
         } else {
-            Err(Error::response(Response {
-                code: 400,
-                headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
-                body: Some("invalid nonce".to_string().into_bytes()),
-                trailers: vec![],
-            }))
+            Err(too_many_request(current, difficulty, "Invalid nonce, maybe difficulty upgraded".to_string()))
         }
     }
 }

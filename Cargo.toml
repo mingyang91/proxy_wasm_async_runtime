@@ -3,7 +3,8 @@ resolver = "2"
 members = [
 	"pow-waf",
 	"pow-runtime",
-	"pow-types"
+	"pow-types",
+	"pow-mine"
 ]
 
 [workspace.package]

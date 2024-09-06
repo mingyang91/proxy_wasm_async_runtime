@@ -92,7 +92,7 @@ static_resources:
                                 timeout:
                                   seconds: 10
                                   nanos: 0
-                              sha256: "2651c6de51e2c4141bf5ec9aef208a298b7b30c8f0f0a3c930b9e4356485e192"
+                              sha256: "27ade122e870d8839ce615af40c3e381da36223d7a493c77a5b27108075b3753"
                             # local:
                             #   filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
                 - name: envoy.filters.http.router

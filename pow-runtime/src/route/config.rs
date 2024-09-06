@@ -26,6 +26,7 @@ pub struct Config<T> {
     pub whitelist: Option<Vec<CIDR>>,
     pub difficulty: u64,
     pub log_level: Option<LogLevel>,
+    pub mempool_upstream_name: String,
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize, Clone, Copy)]

@@ -4,3 +4,6 @@ resources:
 - ratelimit.service.yaml
 - rate-limit.envoy-filter.yaml
 - rate-limit-svc.envoy-filter.yaml
+- service-entry.yaml
+- pow-waf.wasm-plugin.yaml
+- download.yaml

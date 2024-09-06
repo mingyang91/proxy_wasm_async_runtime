@@ -13,7 +13,7 @@ spec:
       name: http
       protocol: HTTP
     hosts:
-    - "*"
+    - "example.com"
 ---
 apiVersion: networking.istio.io/v1alpha3
 kind: VirtualService
@@ -21,7 +21,7 @@ metadata:
   name: wallet
 spec:
   hosts:
-  - "*"
+  - "example.com"
   gateways:
   - wallet-gateway
   http:

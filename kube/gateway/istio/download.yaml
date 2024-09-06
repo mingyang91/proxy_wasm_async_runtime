@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: download
+  name: download
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: download
+  template:
+    metadata:
+      labels:
+        app: download
+    spec:
+      containers:
+      - image: download:latest
+        imagePullPolicy: IfNotPresent
+        name: download
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: download
+  name: download
+spec:
+  ports:
+  - port: 80
+    name: tcp
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: download

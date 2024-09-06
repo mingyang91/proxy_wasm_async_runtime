@@ -13,6 +13,7 @@ pub struct BTC {
 }
 
 pub struct Inner {
+    upstream_name: String,
     recent_hash_list: SharedDataLock<VecDeque<String>>,
     state: RwLock<State>,
 }
@@ -24,14 +25,8 @@ enum State {
     Stopped,
 }
 
-impl Default for BTC {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl BTC {
-    pub fn new() -> Self 
+    pub fn new(upstream_name: String) -> Self 
     {
         let recent_hash_list = SharedDataLock::new(0);
         if let Err(e) = recent_hash_list.initial(VecDeque::new()) {
@@ -40,6 +35,7 @@ impl BTC {
 
         let ret = Self {
             inner: Arc::new(Inner {
+                upstream_name,
                 recent_hash_list,
                 state: RwLock::new(State::Initial),
             })
@@ -109,7 +105,7 @@ impl BTC {
     {
         debug!("fetching latest block hash from mempool.space");
         let response = http_call(
-            "mempool",
+            &self.inner.upstream_name,
             vec![
                 (":method", "GET"),
                 (":path", "/api/blocks/tip/hash"),
@@ -118,9 +114,13 @@ impl BTC {
                 ("accept", "application/json"),
             ],
             None,
-            vec![],
-            Duration::from_secs(1),
-        )?
+            Vec::with_capacity(0),
+            Duration::from_secs(10),
+        )
+        .map_err(|e| {
+            log::error!("failed to make http call: {:?}, please check the upstream {} exists", e, "mempool.space");
+            e
+        })?
         .await
         .map_err(|_| Status::InternalFailure)?;
         

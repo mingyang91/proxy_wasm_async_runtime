@@ -65,6 +65,7 @@ impl Runtime for Plugin {
 
         let whitelist = config.whitelist.take().unwrap_or_default();
         let difficulty = config.difficulty;
+        let mempool_upstream_name = config.mempool_upstream_name.clone();
 
         let router: Router<Setting> = match config.try_into() {
             Ok(router) => router,
@@ -75,7 +76,7 @@ impl Runtime for Plugin {
         };
 
         self.inner = Some(Arc::new(Inner {
-            btc: BTC::new(),
+            btc: BTC::new(mempool_upstream_name),
             router,
             counter_bucket: CounterBucket::new(self.context_id, "rate_limit"),
             whitelist,

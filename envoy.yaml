@@ -47,6 +47,7 @@ static_resources:
                         configuration:
                           "@type": "type.googleapis.com/google.protobuf.StringValue"
                           value: |
+                            mempool_upstream_name: mempool
                             log_level: trace
                             whitelist:
                               - "46.3.240.0/24"
@@ -92,7 +93,7 @@ static_resources:
                                 timeout:
                                   seconds: 10
                                   nanos: 0
-                              sha256: "e6c68a429bd168138292d394ce58f005ac14aa50c8f06740a8279980b8be6dd5"
+                              sha256: "439d982f0a071d04dbb3fb665c155901da7193793433ea24acb0e9ffa328dea7"
                             # local:
                             #   filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
                 - name: envoy.filters.http.router
@@ -125,13 +126,13 @@ static_resources:
                   socket_address:
                     address: httpbin.org
                     port_value: 80
-  - name: mempool
+  - name: mempool.space
     connect_timeout: 30s
     type: LOGICAL_DNS
     dns_lookup_family: V4_ONLY
     lb_policy: ROUND_ROBIN
     load_assignment:
-      cluster_name: mempool
+      cluster_name: mempool.space
       endpoints:
       - lb_endpoints:
         - endpoint:

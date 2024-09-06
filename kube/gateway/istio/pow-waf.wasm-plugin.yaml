@@ -1,0 +1,48 @@
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: pow-waf
+spec:
+  selector:
+    matchLabels:
+      istio: gate
+  url: http://download/pow_waf.wasm
+  imagePullPolicy: IfNotPresent
+  phase: AUTHN
+  pluginConfig:
+    mempool_upstream_name: "outbound|443||mempool.space"
+    log_level: trace
+    whitelist:
+      - "46.3.240.0/24"
+      - "2001:db8::/32"
+    difficulty: 100000
+    virtual_hosts:
+      - host: "example.com"
+        routes:
+          - path: "/"
+            rate_limit:
+              unit: minute
+              requests_per_unit: 100
+          - path: "/api"
+            rate_limit:
+              unit: minute
+              requests_per_unit: 50
+            children:
+              - path: "/users"
+                rate_limit:
+                    unit: minute
+                    requests_per_unit: 100
+              - path: "/posts/*"
+                rate_limit:
+                    unit: minute
+                    requests_per_unit: 100
+      - host: "httpbin.org"
+        routes:
+          - path: "/*"
+            rate_limit:
+              unit: minute
+              requests_per_unit: 10
+          - path: "/ip"
+            rate_limit:
+              unit: minute
+              requests_per_unit: 3

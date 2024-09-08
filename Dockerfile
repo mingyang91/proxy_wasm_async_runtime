@@ -6,4 +6,4 @@ RUN cargo build --release --target wasm32-wasi
 
 
 FROM scratch AS runtime
-COPY --from=builder /usr/src/build/target/wasm32-wasi/release/pow_waf.wasm ./
+COPY --from=builder /usr/src/build/target/wasm32-wasi/release/pow_waf.wasm ./plugin.wasm

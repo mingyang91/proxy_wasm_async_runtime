@@ -47,7 +47,7 @@ static_resources:
                         configuration:
                           "@type": "type.googleapis.com/google.protobuf.StringValue"
                           value: |
-                            mempool_upstream_name: mempool
+                            mempool_upstream_name: mempool.space
                             log_level: trace
                             whitelist:
                               - "46.3.240.0/24"
@@ -93,58 +93,57 @@ static_resources:
                                 timeout:
                                   seconds: 10
                                   nanos: 0
-                              sha256: "439d982f0a071d04dbb3fb665c155901da7193793433ea24acb0e9ffa328dea7"
+                              sha256: "f2ff3ce435008764719ea6b25c32f82cae8d33a841a5524778f5dfec8516aa7c"
                             # local:
                             #   filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
                 - name: envoy.filters.http.router
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
   clusters:
-  - name: download
-    connect_timeout: 5s
-    type: STRICT_DNS
-    lb_policy: ROUND_ROBIN
-    load_assignment:
-      cluster_name: download
-      endpoints:
-        - lb_endpoints:
-            - endpoint:
-                address:
-                  socket_address:
-                    address: download
-                    port_value: 80
-  - name: httpbin
-    connect_timeout: 5s
-    type: STRICT_DNS
-    lb_policy: ROUND_ROBIN
-    load_assignment:
-      cluster_name: httpbin
-      endpoints:
-        - lb_endpoints:
-            - endpoint:
-                address:
-                  socket_address:
-                    address: httpbin.org
-                    port_value: 80
-  - name: mempool.space
-    connect_timeout: 30s
-    type: LOGICAL_DNS
-    dns_lookup_family: V4_ONLY
-    lb_policy: ROUND_ROBIN
-    load_assignment:
-      cluster_name: mempool.space
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: mempool.space
-                port_value: 443
-    transport_socket:
-      name: envoy.transport_sockets.tls
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-
+    - name: download
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: download
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: download
+                      port_value: 80
+    - name: httpbin
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: httpbin
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: httpbin.org
+                      port_value: 80
+    - name: mempool.space
+      connect_timeout: 30s
+      type: LOGICAL_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: mempool.space
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: mempool.space
+                      port_value: 443
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
 # bootstrap_extensions:
 #   - name: envoy.bootstrap.wasm
 #     typed_config:

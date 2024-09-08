@@ -117,9 +117,8 @@ impl BTC {
             Vec::with_capacity(0),
             Duration::from_secs(10),
         )
-        .map_err(|e| {
+        .inspect_err(|&e| {
             log::error!("failed to make http call: {:?}, please check the upstream {} exists", e, "mempool.space");
-            e
         })?
         .await
         .map_err(|_| Status::InternalFailure)?;

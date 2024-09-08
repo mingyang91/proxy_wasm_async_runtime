@@ -1,30 +1,29 @@
 pub mod chain;
 
-use pow_types::bytearray32::ByteArray32;
+use chain::btc::BTC;
 use log::info;
-use proxy_wasm::traits::*;
-use proxy_wasm::types::*;
 use pow_runtime::counter_bucket::CounterBucket;
+use pow_runtime::response::Response;
 use pow_runtime::route::config::Config;
 use pow_runtime::route::config::Router;
 use pow_runtime::route::config::Setting;
 use pow_runtime::route::config::CIDR;
 use pow_runtime::Ctx;
 use pow_runtime::HttpHook;
-use pow_runtime::response::Response;
 use pow_runtime::{Runtime, RuntimeBox};
+use pow_types::bytearray32::ByteArray32;
+use proxy_wasm::traits::*;
+use proxy_wasm::types::*;
 use sha2::Digest;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use chain::btc::BTC;
 
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
-    proxy_wasm::set_root_context(move |context_id| -> Box<dyn RootContext> { 
+    proxy_wasm::set_root_context(move |context_id| -> Box<dyn RootContext> {
         Box::new(RuntimeBox::new(Plugin { context_id, inner: None }))
     });
 }}
-
 
 struct Inner {
     btc: BTC,
@@ -50,18 +49,28 @@ impl Runtime for Plugin {
     fn on_configure(&mut self, configuration: Option<Vec<u8>>) -> bool {
         info!("PoW filter configuring...");
         let Some(config_bytes) = configuration else {
-            return false
+            return false;
         };
 
         let mut config: Config<Setting> = match serde_yaml::from_slice(&config_bytes) {
             Ok(config) => config,
             Err(e) => {
-                log::error!("failed to parse configuration: {}\n raw config: {}", e, String::from_utf8(config_bytes).expect("failed to read raw config into utf8 string"));
+                log::error!(
+                    "failed to parse configuration: {}\n raw config: {}",
+                    e,
+                    String::from_utf8(config_bytes)
+                        .expect("failed to read raw config into utf8 string")
+                );
                 return false;
             }
         };
 
-        proxy_wasm::set_log_level(config.log_level.map(|l| l.into()).unwrap_or(LogLevel::Trace));
+        proxy_wasm::set_log_level(
+            config
+                .log_level
+                .map(|l| l.into())
+                .unwrap_or(LogLevel::Trace),
+        );
 
         let whitelist = config.whitelist.take().unwrap_or_default();
         let difficulty = config.difficulty;
@@ -70,7 +79,12 @@ impl Runtime for Plugin {
         let router: Router<Setting> = match config.try_into() {
             Ok(router) => router,
             Err(e) => {
-                log::error!("failed to convert configuration: {}\n raw config: {}", e, String::from_utf8(config_bytes).expect("failed to read raw config into utf8 string"));
+                log::error!(
+                    "failed to convert configuration: {}\n raw config: {}",
+                    e,
+                    String::from_utf8(config_bytes)
+                        .expect("failed to read raw config into utf8 string")
+                );
                 return false;
             }
         };
@@ -85,19 +99,18 @@ impl Runtime for Plugin {
         info!("PoW filter configured");
         true
     }
-    
+
     type Hook = Hook;
-    
+
     fn create_http_context(&self, _context_id: u32) -> Option<Self::Hook> {
-        Some(Hook { 
+        Some(Hook {
             ctx: Ctx::new(_context_id),
             plugin: self.inner.clone().expect("plugin not initialized"),
         })
     }
 }
 
-
-pub struct Hook { 
+pub struct Hook {
     ctx: Ctx,
     plugin: Arc<Inner>,
 }
@@ -125,20 +138,30 @@ fn get_difficulty(level: u64) -> ByteArray32 {
 struct DifficultyResponse {
     current: ByteArray32,
     difficulty: ByteArray32,
+    error: String,
     message: String,
 }
 
 #[derive(Debug)]
 enum Error {
-    Status { reason: String, status: proxy_wasm::types::Status },
+    Status {
+        reason: String,
+        status: proxy_wasm::types::Status,
+    },
     Response(Response),
     #[allow(dead_code)]
-    Other { reason: String, error: Box<dyn std::error::Error> },
+    Other {
+        reason: String,
+        error: Box<dyn std::error::Error>,
+    },
 }
 
 impl Error {
     fn status(reason: impl Into<String>, status: proxy_wasm::types::Status) -> Self {
-        Error::Status { reason: reason.into(), status }
+        Error::Status {
+            reason: reason.into(),
+            status,
+        }
     }
 
     fn response(response: Response) -> Self {
@@ -147,7 +170,10 @@ impl Error {
 
     #[allow(dead_code)]
     fn other(reason: impl Into<String>, error: impl Into<Box<dyn std::error::Error>>) -> Self {
-        Error::Other { reason: reason.into(), error: error.into() }
+        Error::Other {
+            reason: reason.into(),
+            error: error.into(),
+        }
     }
 }
 
@@ -157,7 +183,7 @@ impl From<Error> for Response {
             Error::Response(response) => {
                 log::debug!("reject request with response, {:?}", response.code);
                 response
-            },
+            }
             Error::Status { reason, status } => {
                 let msg = format!("{:?}: {}", status, reason);
                 log::warn!("failed hostcall with error, {}", msg);
@@ -167,7 +193,7 @@ impl From<Error> for Response {
                     body: Some(msg.into_bytes()),
                     trailers: vec![],
                 }
-            },
+            }
             Error::Other { reason, error } => {
                 let msg = format!("{}: {}", error, reason);
                 log::warn!("failed unknow error, {}", msg);
@@ -177,22 +203,27 @@ impl From<Error> for Response {
                     body: Some(msg.into_bytes()),
                     trailers: vec![],
                 }
-            },
+            }
         }
     }
 }
 
-fn too_many_request(current: ByteArray32, difficulty: u64, description: String) -> Error {
+fn too_many_request(current: ByteArray32, difficulty: u64, error: String) -> Error {
     let target = get_difficulty(difficulty);
     let body = DifficultyResponse {
         current,
         difficulty: target,
-        message: description
+        error,
+        message: "Access restriction triggered".to_string(),
     };
     Error::response(Response {
         code: 429,
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-        body: Some(serde_json::to_string(&body).expect("failed to serialize difficulty").into_bytes()),
+        body: Some(
+            serde_json::to_string(&body)
+                .expect("failed to serialize difficulty")
+                .into_bytes(),
+        ),
         trailers: vec![],
     })
 }
@@ -209,20 +240,22 @@ fn forbidden(message: String) -> Error {
 
 impl Hook {
     fn get_header(&self, key: &str) -> Result<String, Error> {
-        self.ctx.get_http_request_header(key)
+        self.ctx
+            .get_http_request_header(key)
             .map_err(|s| Error::status(format!("failed to get header: {}", key), s))?
             .ok_or_else(|| forbidden(format!("missing header: {}", key)))
     }
 
     fn get_client_address(&self) -> Result<String, Error> {
-        self.ctx.get_client_address()
+        self.ctx
+            .get_client_address()
             .map_err(|s| Error::status("failed to get client address", s))?
             .ok_or_else(|| forbidden("failed to get client address from request".to_string()))
     }
 
     fn get_current_hash(&self) -> Result<ByteArray32, Error> {
         let Some(last_hash) = self.plugin.btc.get_latest_hash() else {
-            return Err(Error::status("failed to get latest hash", Status::NotFound))
+            return Err(Error::status("failed to get latest hash", Status::NotFound));
         };
 
         last_hash.as_str().try_into()
@@ -230,7 +263,8 @@ impl Hook {
     }
 
     fn get_path(&self) -> Result<String, Error> {
-        self.ctx.get_http_request_path()
+        self.ctx
+            .get_http_request_path()
             .map_err(|s| Error::status("failed to get path", s))
     }
 
@@ -241,11 +275,29 @@ impl Hook {
     }
 }
 
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("failed to get timestamp")
+        .as_secs()
+}
+
 impl HttpHook for Hook {
-    async fn on_request_headers(&self, _num_headers: usize, _end_of_stream: bool) -> Result<(), impl Into<Response>> {
+    async fn on_request_headers(
+        &self,
+        _num_headers: usize,
+        _end_of_stream: bool,
+    ) -> Result<(), impl Into<Response>> {
         let addr = self.get_client_address()?;
-        let addr: SocketAddr = addr.parse().map_err(|s| forbidden(format!("invalid client address {}: {}", s, addr)))?;
-        if self.plugin.whitelist.iter().any(|cidr| cidr.contains(addr.ip())) {
+        let addr: SocketAddr = addr
+            .parse()
+            .map_err(|s| forbidden(format!("invalid client address {}: {}", s, addr)))?;
+        if self
+            .plugin
+            .whitelist
+            .iter()
+            .any(|cidr| cidr.contains(addr.ip()))
+        {
             return Ok(());
         }
         let host = self.get_header(":authority")?;
@@ -255,14 +307,30 @@ impl HttpHook for Hook {
 
         let Some(found) = self.plugin.router.matches(&host, &path) else {
             log::debug!("no matched route found, skip rate limit");
-            return Ok(())
+            return Ok(());
         };
 
-        let key = format!("{}:{}:{}{}", addr.ip(), found.rate_limit.current_bucket(), host, found.pattern());
-        let counter = self.plugin.counter_bucket.get(&key).map_err(|s| Error::other("failed to get counter", s))?;
-        let difficulty = counter / found.rate_limit.requests_per_unit as u64 * self.plugin.difficulty;
+        let key = format!(
+            "{}:{}:{}{}",
+            addr.ip(),
+            found.rate_limit.current_bucket(),
+            host,
+            found.pattern()
+        );
+        let counter = self
+            .plugin
+            .counter_bucket
+            .get(&key)
+            .map_err(|s| Error::other("failed to get counter", s))?;
+        let difficulty =
+            counter / found.rate_limit.requests_per_unit as u64 * self.plugin.difficulty;
         let current = self.get_current_hash()?;
-        log::debug!("key: {}, counter: {}, difficulty: {}", key, counter, difficulty);
+        log::debug!(
+            "key: {}, counter: {}, difficulty: {}",
+            key,
+            counter,
+            difficulty
+        );
 
         if difficulty == 0 {
             self.plugin.counter_bucket.inc(&key, 1);
@@ -271,38 +339,46 @@ impl HttpHook for Hook {
 
         let target = get_difficulty(difficulty);
 
-        let timestamp = self.get_timestamp()
-            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Timestamp in header, or malformed".to_string()))?;
-        if timestamp + 60 < std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs() {
-            return Err(too_many_request(current, difficulty, "timestamp expired".to_string()))
+        let make_body = |error: &str| too_many_request(current, difficulty, error.to_string());
+
+        let timestamp = self
+            .get_timestamp()
+            .map_err(|_| make_body("Missing X-PoW-Timestamp in header, or malformed"))?;
+
+        if timestamp + 60 < now() {
+            return Err(make_body("timestamp expired"));
         }
 
-        let nonce = self.get_header("X-PoW-Nonce")
-            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Nonce in header".to_string()))?;
+        let nonce = self
+            .get_header("X-PoW-Nonce")
+            .map_err(|_| make_body("Missing X-PoW-Nonce in header"))?;
 
         let nonce = hex::decode(nonce)
-            .map_err(|s| too_many_request(current, difficulty, format!("X-PoW-Nonce must be a hex string: {}", s)))?;
+            .map_err(|s| make_body(&format!("X-PoW-Nonce must be a hex string: {}", s)))?;
 
-        let last = self.get_header("X-PoW-Base")
-            .map_err(|_| too_many_request(current, difficulty, "miss X-PoW-Base in header".to_string()))?;
+        let last = self
+            .get_header("X-PoW-Base")
+            .map_err(|_| make_body("Missing X-PoW-Base in header"))?;
 
         if !self.plugin.btc.check_in_list(&last) {
-            return Err(too_many_request(current, difficulty, "X-PoW-Base are expired, please use current".to_string()))
+            return Err(make_body("X-PoW-Base are expired, please use current"));
         }
 
-        let last: ByteArray32 = last.as_str().try_into()
+        let last: ByteArray32 = last
+            .as_str()
+            .try_into()
             .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
 
         let mut data = last.as_bytes().to_vec();
         data.extend(timestamp.to_be_bytes());
         data.extend(path.as_bytes());
 
-        if valid_nonce(&data, target, &nonce) {
-            self.plugin.counter_bucket.inc(&key, 1);
-            Ok(())
-        } else {
-            Err(too_many_request(current, difficulty, "Invalid nonce, maybe difficulty upgraded".to_string()))
+        if !valid_nonce(&data, target, &nonce) {
+            return Err(make_body("Invalid nonce, maybe difficulty upgraded"));
         }
+
+        self.plugin.counter_bucket.inc(&key, 1);
+        Ok(())
     }
 }
 
@@ -318,8 +394,8 @@ fn valid_nonce(data: &[u8], difficulty: ByteArray32, nonce: &[u8]) -> bool {
 
 #[cfg(test)]
 mod test {
-    use pow_types::bytearray32::ByteArray32;
     use crate::valid_nonce;
+    use pow_types::bytearray32::ByteArray32;
 
     #[test]
     fn mine() {
@@ -327,9 +403,10 @@ mod test {
             .try_into()
             .expect("failed to parse last hash");
         // 000010c6f7a0b5edffffffffffffffffffffffffffffffffffffffffffffffff
-        let difficulty: ByteArray32 = "000010c6f7a0b5edffffffffffffffffffffffffffffffffffffffffffffffff"
-            .try_into()
-            .expect("failed to parse difficulty");
+        let difficulty: ByteArray32 =
+            "000010c6f7a0b5edffffffffffffffffffffffffffffffffffffffffffffffff"
+                .try_into()
+                .expect("failed to parse difficulty");
 
         loop {
             let nonce = rand::random::<[u8; 8]>();

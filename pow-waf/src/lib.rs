@@ -367,7 +367,7 @@ impl HttpHook for Hook {
         let last: ByteArray32 = last
             .as_str()
             .try_into()
-            .map_err(|e| forbidden(format!("failed to parse last hash: {}", e)))?;
+            .map_err(|e| make_body(&format!("failed to parse X-PoW-Base hash: {}", e)))?;
 
         let mut data = last.as_bytes().to_vec();
         data.extend(timestamp.to_be_bytes());

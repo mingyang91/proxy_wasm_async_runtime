@@ -1,10 +1,14 @@
-use std::{net::IpAddr, ops::Deref, str::FromStr};
+use std::{fmt::Display, net::IpAddr, ops::Deref, str::FromStr};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{radix_tree::{Matches, RadixTree}, trie::Trie, RouteError};
+use super::{
+    radix_tree::{Matches, RadixTree},
+    trie::Trie,
+    RouteError,
+};
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VirtualHost<T> {
@@ -30,7 +34,7 @@ pub struct Config<T> {
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -53,9 +57,9 @@ impl From<LogLevel> for proxy_wasm::types::LogLevel {
     }
 }
 
-impl <T> TryFrom<Config<T>> for Router<T> {
+impl<T> TryFrom<Config<T>> for Router<T> {
     type Error = RouteError;
-    
+
     fn try_from(value: Config<T>) -> Result<Self, Self::Error> {
         let mut trie = Trie::default();
         for virtual_host in value.virtual_hosts {
@@ -69,10 +73,15 @@ impl <T> TryFrom<Config<T>> for Router<T> {
     }
 }
 
-fn radix_add_all<T>(radix: &mut RadixTree<T>, path: &str, config: T, children: Option<Vec<Route<T>>>) -> Result<(), RouteError> {
+fn radix_add_all<T>(
+    radix: &mut RadixTree<T>,
+    path: &str,
+    config: T,
+    children: Option<Vec<Route<T>>>,
+) -> Result<(), RouteError> {
     radix.add(path, config)?;
     let Some(children) = children else {
-        return Ok(())
+        return Ok(());
     };
 
     for child in children {
@@ -81,7 +90,6 @@ fn radix_add_all<T>(radix: &mut RadixTree<T>, path: &str, config: T, children: O
     }
     Ok(())
 }
-
 
 fn normalize_path(path: &str) -> String {
     let re = Regex::new("//+").unwrap();
@@ -93,7 +101,7 @@ fn normalize_path(path: &str) -> String {
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum TimeUnit {
     Second,
     Minute,
@@ -121,7 +129,10 @@ pub struct RateLimit {
 impl RateLimit {
     pub fn current_bucket(&self) -> u64 {
         let unit: u64 = self.unit.as_secs();
-        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("failed to get timestamp").as_secs();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("failed to get timestamp")
+            .as_secs();
         timestamp / unit
     }
 }
@@ -137,13 +148,88 @@ pub enum CIDR {
     V6([u16; 8], u8),
 }
 
+impl Display for CIDR {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CIDR::V4(ip, mask) => write!(f, "{}.{}.{}.{}/{}", ip[0], ip[1], ip[2], ip[3], mask),
+            CIDR::V6(ip, mask) => {
+                print_compressed_ip(ip, f)?;
+                write!(f, "/{}", mask)
+            }
+        }
+    }
+}
+
+fn print_compressed_ip(ip: &[u16; 8], f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut best_range: Option<(usize, usize)> = None;
+    let mut current_range: Option<(usize, usize)> = None;
+
+    // Find the best place to compress the zero blocks
+    for (i, &segment) in ip.iter().enumerate() {
+        if segment == 0 {
+            if let Some((start, _)) = current_range {
+                current_range = Some((start, i));
+            } else {
+                current_range = Some((i, i));
+            }
+        } else {
+            if let Some((start, end)) = current_range {
+                if best_range
+                    .map(|(fst, snd)| (end - start) > (snd - fst))
+                    .unwrap_or(true)
+                {
+                    best_range = current_range;
+                }
+            }
+            current_range = None;
+        }
+    }
+
+    // Final check for the best range of zeros
+    if let Some((start, end)) = current_range {
+        if best_range
+            .map(|(fst, snd)| (end - start) > (snd - fst))
+            .unwrap_or(true)
+        {
+            best_range = current_range;
+        }
+    }
+
+    // Special case for when the entire address is "::"
+    if best_range == Some((0, 7)) {
+        return write!(f, "::");
+    }
+
+    let (start, end) = best_range.unwrap_or((0, 0));
+
+    if ip[0] != 0 && best_range.is_some() && start != 0 {
+        write!(f, "{:x}", ip[0])?;
+    }
+    // Print the IPv6 address, applying compression where needed
+    for (i, &segment) in ip.iter().enumerate().skip(1) {
+        if i == start || i == end {
+            write!(f, ":")?;
+        } else if i > start && i < end {
+            continue;
+        } else if i == end + 1 {
+            write!(f, "{:x}", segment)?;
+        } else {
+            write!(f, ":{:x}", segment)?;
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum ParseCIDRError {
     #[error("invalid format, expected ip/prefix. Got: {0}")]
     InvalidFormat(String),
     #[error("invalid ip address")]
     AddrParseError(#[from] std::net::AddrParseError),
-    #[error("invalid prefix, must be a number between 0 and 32 for IPv4, 0 and 128 for IPv6. Got: {0}")]
+    #[error(
+        "invalid prefix, must be a number between 0 and 32 for IPv4, 0 and 128 for IPv6. Got: {0}"
+    )]
     InvalidPrefix(String),
 }
 
@@ -156,7 +242,8 @@ impl FromStr for CIDR {
             return Err(ParseCIDRError::InvalidFormat(s.to_string()));
         }
         let ip = parts[0].parse()?;
-        let prefix = parts[1].parse::<u8>()
+        let prefix = parts[1]
+            .parse::<u8>()
             .map_err(|e| ParseCIDRError::InvalidPrefix(e.to_string()))?;
 
         match ip {
@@ -166,14 +253,14 @@ impl FromStr for CIDR {
                 } else {
                     Ok(CIDR::V4(ip.octets(), prefix))
                 }
-            },
+            }
             IpAddr::V6(ip) => {
                 if prefix > 128 {
                     Err(ParseCIDRError::InvalidPrefix(prefix.to_string()))
                 } else {
                     Ok(CIDR::V6(ip.segments(), prefix))
                 }
-            },
+            }
         }
     }
 }
@@ -183,14 +270,7 @@ impl Serialize for CIDR {
     where
         S: serde::Serializer,
     {
-        match self {
-            CIDR::V4(ip, prefix) => {
-                serializer.serialize_str(&format!("{}.{}.{}.{}/{}", ip[0], ip[1], ip[2], ip[3], prefix))
-            },
-            CIDR::V6(ip, prefix) => {
-                serializer.serialize_str(&format!("{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}/{}", ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], prefix))
-            },
-        }
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -212,13 +292,13 @@ impl CIDR {
                 let cidr = u32::from_be_bytes(*cidr);
                 let ip = u32::from_be_bytes(ip.octets());
                 (cidr & mask) == (ip & mask)
-            },
+            }
             (CIDR::V6(cidr, prefix), IpAddr::V6(ip)) => {
                 let mask = u128::MAX << (128 - prefix);
                 let cidr = u128::from_be_bytes(Self::u16s_to_u8s(*cidr));
                 let ip = u128::from_be_bytes(Self::u16s_to_u8s(ip.segments()));
                 (cidr & mask) == (ip & mask)
-            },
+            }
             _ => false,
         }
     }
@@ -226,8 +306,8 @@ impl CIDR {
     fn u16s_to_u8s(input: [u16; 8]) -> [u8; 16] {
         let mut output = [0u8; 16];
         for (i, &item) in input.iter().enumerate() {
-            output[i * 2] = (item & 0xFF) as u8;         // Lower byte
-            output[i * 2 + 1] = (item >> 8) as u8;       // Upper byte
+            output[i * 2] = (item & 0xFF) as u8; // Lower byte
+            output[i * 2 + 1] = (item >> 8) as u8; // Upper byte
         }
         output
     }
@@ -237,7 +317,7 @@ pub struct Router<T>(Trie<RadixTree<T>>);
 
 pub struct Found<'a, T>(Matches<'a, T>);
 
-impl <'a, T> Found<'a, T> {
+impl<'a, T> Found<'a, T> {
     pub fn pattern(&self) -> &str {
         &self.0.data.pattern
     }
@@ -251,7 +331,7 @@ impl Deref for Found<'_, Setting> {
     }
 }
 
-impl <T> Router<T> {
+impl<T> Router<T> {
     pub fn matches(&self, domain: &str, path: &str) -> Option<Found<T>> {
         let route = self.0.matches(domain)?;
         route.matches(path).map(|matches| Found(matches))
@@ -301,11 +381,14 @@ virtual_hosts:
           requests_per_unit: 100
         "#;
 
-        let config: Config<Setting> = serde_yaml::from_str(config_str).expect("failed to parse config");
+        let config: Config<Setting> =
+            serde_yaml::from_str(config_str).expect("failed to parse config");
         println!("{:?}", config.whitelist);
         let route: Router<Setting> = config.try_into().expect("failed to convert config");
 
-        let found = route.matches("example.com", "/api/posts/114514").expect("route not found");
+        let found = route
+            .matches("example.com", "/api/posts/114514")
+            .expect("route not found");
         println!("{:?}", found.rate_limit);
     }
 
@@ -318,5 +401,19 @@ virtual_hosts:
         let cidr: CIDR = "2001:db8::/32".parse().unwrap();
         assert!(cidr.contains("2001:db8::1".parse().unwrap()));
         assert!(cidr.contains("2001:db8::ffff".parse().unwrap()));
+    }
+
+    #[test]
+    fn print_v6_cidr() {
+        let cidr: CIDR = "2001:db8::/32".parse().unwrap();
+        assert_eq!(format!("{}", cidr), "2001:db8::/32");
+        let cidr: CIDR = "1111::abcd:0:0:1234:abcd/64".parse().unwrap();
+        assert_eq!(format!("{}", cidr), "1111::abcd:0:0:1234:abcd/64");
+        let cidr: CIDR = "::/0".parse().unwrap();
+        assert_eq!(format!("{}", cidr), "::/0");
+        let cidr: CIDR = "1050::5:600:300c:326b/128".parse().unwrap();
+        assert_eq!(format!("{}", cidr), "1050::5:600:300c:326b/128");
+        let cidr: CIDR = "1050::5:600:300c:326b/128".parse().unwrap();
+        assert_eq!(format!("{}", cidr), "1050::5:600:300c:326b/128");
     }
 }

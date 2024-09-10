@@ -1,17 +1,18 @@
 pub mod chain;
+pub mod config;
 
 use chain::btc::BTC;
+use config::Config;
+use config::Setting;
 use log::info;
 use pow_runtime::counter_bucket::CounterBucket;
 use pow_runtime::response::Response;
-use pow_runtime::route::config::Config;
-use pow_runtime::route::config::Router;
-use pow_runtime::route::config::Setting;
-use pow_runtime::route::config::CIDR;
 use pow_runtime::Ctx;
 use pow_runtime::HttpHook;
 use pow_runtime::{Runtime, RuntimeBox};
 use pow_types::bytearray32::ByteArray32;
+use pow_types::cidr::CIDR;
+use pow_types::config::Router;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use sha2::Digest;
@@ -76,7 +77,7 @@ impl Runtime for Plugin {
         let difficulty = config.difficulty;
         let mempool_upstream_name = config.mempool_upstream_name.clone();
 
-        let router: Router<Setting> = match config.try_into() {
+        let router: Router<Setting> = match config.virtual_hosts.try_into() {
             Ok(router) => router,
             Err(e) => {
                 log::error!(

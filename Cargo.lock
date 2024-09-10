@@ -399,7 +399,12 @@ dependencies = [
 name = "pow-types"
 version = "0.1.0"
 dependencies = [
+ "percent-encoding",
+ "regex",
  "serde",
+ "serde_yaml",
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]

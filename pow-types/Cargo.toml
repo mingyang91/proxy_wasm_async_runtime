@@ -8,3 +8,10 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = "1"
+thiserror = "1.0"
+regex = "1.10"
+smallvec = "1.13"
+percent-encoding = "2.3"
+
+[dev-dependencies]
+serde_yaml = "0.9"

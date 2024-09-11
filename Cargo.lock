@@ -384,14 +384,10 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "log",
- "percent-encoding",
  "pin-project-lite",
  "proxy-wasm",
- "regex",
  "serde",
  "serde_json",
- "serde_yaml",
- "smallvec",
  "thiserror",
 ]
 

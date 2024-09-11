@@ -168,7 +168,6 @@ impl Ctx {
     pub fn get_http_request_header(&self, key: &str) -> Result<Option<String>, Status> {
         hostcalls::set_effective_context(self.id)?;
         Ok(HttpContext::get_http_request_header(self, key))
-        // .or_else(|| HttpContext::get_http_request_trailer(self, key)))
     }
 
     pub fn get_http_request_trailers(&self) -> Result<Vec<(String, String)>, Status> {

@@ -17,7 +17,7 @@ services:
     image: nginx:latest
     hostname: download
     volumes:
-      - ./target/wasm32-wasi/release:/usr/share/nginx/html
+      - ./target/wasm32-wasip1/release:/usr/share/nginx/html
     networks:
       - envoymesh
   envoy:

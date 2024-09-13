@@ -13,13 +13,6 @@
 # limitations under the License.
 
 services:
-  download:
-    image: nginx:latest
-    hostname: download
-    volumes:
-      - ./target/wasm32-wasip1/release:/usr/share/nginx/html
-    networks:
-      - envoymesh
   envoy:
     image: envoyproxy/envoy:v1.31-latest
     hostname: envoy
@@ -27,7 +20,7 @@ services:
       - "10000:10000"
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml
-      - ./target/wasm32-wasi/release:/etc/envoy/proxy-wasm-plugins
+      - ./target/wasm32-wasip1/release:/etc/envoy/proxy-wasm-plugins
     networks:
       - envoymesh
     command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]

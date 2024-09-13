@@ -260,7 +260,7 @@ impl<H: HttpHook> HttpContext for HookHolder<H> {
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         log::debug!("on_http_response_headers");
         if let Some(name) = H::filter_name() {
-            match self.get_http_request_header("X-Filter-Name") {
+            match self.get_http_response_header("X-Filter-Name") {
                 Some(previous) => {
                     let p = format!("{}, {}", previous, name);
                     self.set_http_response_header("X-Filter-Name", Some(p.as_str()))

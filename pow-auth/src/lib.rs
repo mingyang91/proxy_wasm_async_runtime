@@ -13,7 +13,7 @@ use proxy_wasm::{
 };
 use secp256k1::{ecdsa::Signature, PublicKey};
 
-const HEADER_PUBLIC_KEY_NAME: &str = "X-Auth-Public-Key";
+const HEADER_PUBLIC_KEY_NAME: &str = "X-Auth-PublicKey";
 const HEADER_SIGNATURE_NAME: &str = "X-Auth-Signature";
 const HEADER_TIMESTAMP_NAME: &str = "X-Auth-Timestamp";
 
@@ -117,7 +117,7 @@ impl Runtime for Plugin {
             return false;
         };
 
-        let mut config: Config<Setting> = match serde_json::from_slice(&config_bytes) {
+        let mut config: Config<Setting> = match serde_yaml::from_slice(&config_bytes) {
             Ok(config) => config,
             Err(e) => {
                 log::error!(
@@ -220,6 +220,13 @@ impl Hook {
     }
 }
 
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("failed to get timestamp")
+        .as_secs()
+}
+
 impl HttpHook for Hook {
     fn filter_name() -> Option<&'static str> {
         Some("auth")
@@ -253,13 +260,30 @@ impl HttpHook for Hook {
             return Ok(());
         };
 
+
+        let timestamp = self
+            .get_header(HEADER_TIMESTAMP_NAME)
+            .map_err(|_| unauthorized(&format!("Missing {} in header", HEADER_TIMESTAMP_NAME)))?;
+
+        let timestamp = timestamp
+            .parse::<u64>()
+            .map_err(|_| unauthorized("Invalid timestamp"))?;
+
+        if timestamp + 60 < now() {
+            return Err(unauthorized("Request timestamp is too old"));
+        }
+
         let public_key: PublicKey = self
             .get_header(HEADER_PUBLIC_KEY_NAME)
             .map_err(|_| unauthorized(&format!("Missing {} in header", HEADER_PUBLIC_KEY_NAME)))?
             .parse()
             .map_err(|e| unauthorized(&format!("Invalid public key: {}", e)))?;
 
-        match found.grants.get(&public_key) {
+        let Setting::Grants(ref grants) = *found else {
+            return Ok(());
+        };
+
+        match grants.get(&public_key) {
             Some(trusted_name) => {
                 log::debug!("found public key in grants: {}, continue...", trusted_name);
             }
@@ -277,14 +301,6 @@ impl HttpHook for Hook {
                 ))
             })?;
 
-        let timestamp = self
-            .get_header(HEADER_TIMESTAMP_NAME)
-            .map_err(|_| unauthorized(&format!("Missing {} in header", HEADER_TIMESTAMP_NAME)))?;
-
-        let timestamp = timestamp
-            .parse::<u64>()
-            .map_err(|_| unauthorized("Invalid timestamp"))?;
-
         let factors = AuthFactors::new(&path, timestamp);
         let auth_identity = AuthIdentity::new(&public_key, factors, &signature);
         auth_identity
@@ -296,17 +312,9 @@ impl HttpHook for Hook {
 #[cfg(test)]
 mod test {
     use hex_literal::hex;
-    use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
-    use sha2::{Digest, Sha256};
+    use secp256k1::{PublicKey, Secp256k1, SecretKey};
 
-    fn digest<D>(data: D) -> [u8; 32]
-    where
-        D: AsRef<[u8]>,
-    {
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        hasher.finalize().into()
-    }
+    use crate::auth_identity::AuthFactors;
 
     #[test]
     fn test() {
@@ -316,15 +324,17 @@ mod test {
         let secp = Secp256k1::new();
         let pub_key = PublicKey::from_secret_key(&secp, &secret);
         println!("{:?}", pub_key);
-        println!("{:?}", pub_key.serialize());
-        println!("{:?}", PublicKey::from_slice(&pub_key.serialize()));
+        let pk_js = serde_json::to_value(pub_key).expect("failed to serialize public key");
+        println!("{:?}", &pk_js);
+        println!("{:?}", serde_json::from_value::<PublicKey>(pk_js));
 
-        let msg_plain = b"hello world";
-        let digest = digest(msg_plain);
-        let msg = Message::from_digest(digest);
+        let msg_plain = "/json";
+        let timestamp = 1610000000;
+        let factors: AuthFactors = AuthFactors::new(msg_plain, timestamp);
+        let msg = factors.into();
 
         let sign = secp.sign_ecdsa(&msg, &secret);
-        println!("{:?}", sign);
+        println!("{:?}", serde_json::to_value(sign));
 
         let verify = secp.verify_ecdsa(&msg, &sign, &pub_key);
         println!("{:?}", verify);

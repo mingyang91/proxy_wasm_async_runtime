@@ -12,22 +12,30 @@ pub struct Token {
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RawSetting {
-    pub grants: Vec<Token>,
+#[serde(rename_all = "snake_case")]
+enum RawSetting {
+    Grants(Vec<Token>),
+    Public,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct Setting {
-    pub grants: HashMap<PublicKey, String>,
+pub enum Setting {
+    Grants(HashMap<PublicKey, String>),
+    Public,
 }
 
 impl From<RawSetting> for Setting {
     fn from(raw: RawSetting) -> Self {
-        let mut grants = HashMap::new();
-        for token in raw.grants {
-            grants.insert(token.public_key, token.name);
+        match raw {
+            RawSetting::Grants(grants_vec) => {
+                let mut grants = HashMap::new();
+                for token in grants_vec {
+                    grants.insert(token.public_key, token.name);
+                }
+                Setting::Grants(grants)
+            }
+            RawSetting::Public => Setting::Public,
         }
-        Self { grants }
     }
 }
 

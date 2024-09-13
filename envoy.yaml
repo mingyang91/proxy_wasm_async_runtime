@@ -86,16 +86,47 @@ static_resources:
                         vm_config:
                           runtime: "envoy.wasm.runtime.v8"
                           code:
-                            remote:
-                              http_uri:
-                                uri: "http://download/pow_waf.wasm"
-                                cluster: download
-                                timeout:
-                                  seconds: 10
-                                  nanos: 0
-                              sha256: "12a49e633731efcc91ac083fe2eca0c761d17bc3aebefc4dca438b4725d3ea7e"
-                            # local:
-                            #   filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
+                            local:
+                              filename: "/etc/envoy/proxy-wasm-plugins/pow_waf.wasm"
+                - name: envoy.filters.http.wasm
+                  typed_config:
+                    "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+                    type_url: type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+                    value:
+                      config:
+                        name: "Auth"
+                        configuration:
+                          "@type": "type.googleapis.com/google.protobuf.StringValue"
+                          value: |
+                            log_level: trace
+                            whitelist:
+                            - "46.3.240.0/24"
+                            - "2001:db8::/32"
+                            virtual_hosts:
+                            - host: "example.com"
+                              routes:
+                              - path: "/api"
+                                public: null
+                                children:
+                                - path: "/users"
+                                  grants:
+                                  - name: "Alice"
+                                    public_key: "039e70a683d711ab788433b4cabddbd10dce4bb1f29c67cc3219b325053b0f2f1c"
+                            - host: "httpbin.org"
+                              routes:
+                              - path: "/*"
+                                public: null
+                              - path: "/ip"
+                                public: null
+                              - path: "/json"
+                                grants:
+                                - name: "Alice"
+                                  public_key: "039e70a683d711ab788433b4cabddbd10dce4bb1f29c67cc3219b325053b0f2f1c"
+                        vm_config:
+                          runtime: "envoy.wasm.runtime.v8"
+                          code:
+                            local:
+                              filename: "/etc/envoy/proxy-wasm-plugins/pow_auth.wasm"
                 - name: envoy.filters.http.router
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

@@ -1,11 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-	"pow-waf",
-	"pow-runtime",
-	"pow-types",
-	"pow-mine"
-]
+members = ["pow-waf", "pow-runtime", "pow-types", "pow-mine", "pow-auth"]
 
 [workspace.package]
 authors = ["mingyang91 <my@famer.me>"]

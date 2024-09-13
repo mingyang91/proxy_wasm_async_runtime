@@ -42,6 +42,7 @@ struct Plugin {
 
 impl Context for Plugin {}
 impl Runtime for Plugin {
+    type Hook = Hook;
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         info!("PoW filter starting...");
         true
@@ -100,8 +101,6 @@ impl Runtime for Plugin {
         info!("PoW filter configured");
         true
     }
-
-    type Hook = Hook;
 
     fn create_http_context(&self, _context_id: u32) -> Option<Self::Hook> {
         Some(Hook {
@@ -284,6 +283,10 @@ fn now() -> u64 {
 }
 
 impl HttpHook for Hook {
+    fn filter_name() -> Option<&'static str> {
+        Some("PoW")
+    }
+
     async fn on_request_headers(
         &self,
         _num_headers: usize,
